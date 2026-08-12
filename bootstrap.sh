@@ -79,6 +79,15 @@ until [ "$(docker compose ps -q postgres | xargs -r docker inspect -f '{{.State.
     sleep 2
 done
 
+# Los tests corren sobre Postgres, no sobre sqlite: el esquema usa una columna
+# generada que sqlite no sabe ejecutar (CONTEXTO.md §4). Necesitan su propia base
+# para no pisar la de desarrollo en cada `migrate:fresh`.
+echo "  Creando la base de tests si no existe..."
+DB_USER=$(grep -E '^DB_USERNAME=' .env | cut -d= -f2)
+docker compose exec -T postgres psql -U "$DB_USER" -d postgres \
+    -tc "SELECT 1 FROM pg_database WHERE datname='panel_testing'" | grep -q 1 \
+    || docker compose exec -T postgres createdb -U "$DB_USER" panel_testing
+
 paso "Clave de aplicación y migraciones"
 grep -q '^APP_KEY=.\+' .env || docker compose run --rm app php artisan key:generate
 docker compose run --rm app php artisan migrate --force

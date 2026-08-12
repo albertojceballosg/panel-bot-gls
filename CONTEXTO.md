@@ -216,7 +216,7 @@ docker compose logs -f vite
 | # | Qué | Estado |
 |---|---|---|
 | 0 | Docker, scaffold de Laravel, Livewire, Tailwind | **Hecha** (12/08/2026) |
-| 1 | Migraciones, modelos y seeder | — |
+| 1 | Migraciones, modelos y seeder | **Hecha** (12/08/2026) |
 | 2 | `GET /api/rutas` + token + test de contrato | — |
 | 3 | CRUD Livewire de comercios y mensajeros | — |
 | 4 | Historial de cambios | **Alcance sin confirmar** — ver §8 |
@@ -237,14 +237,30 @@ No hizo falta configurar `server.hmr.host`: el esqueleto de Laravel 13 ya trae T
 cableado (`@tailwindcss/vite` + `@import 'tailwindcss'`) y, con el 5173 publicado, el
 navegador llega a Vite por `localhost` sin más.
 
-### Fase 1 — Migraciones, modelos y seeder
+### Fase 1 — Hecha el 12/08/2026
 
 - Migraciones de `mensajeros` y `comercios` según §4, con la columna generada y los índices
-  únicos.
+  únicos. La FK es `restrictOnDelete`: borrar un mensajero no puede llevarse por delante
+  sus comercios en silencio.
 - Modelos con la relación `Mensajero hasMany Comercio`.
-- Seeder que carga los 93 comercios. **Ver §9: el fichero de origen no está en el repo.**
-- Validación: `nombre` obligatorio, `codigo` único cuando no es nulo, `mensajero_id`
-  existente.
+- `MaestroRutasSeeder` carga los 93 comercios desde el CSV. **Ver §9: el fichero de origen
+  no está en el repo.** Es idempotente y no pisa `codigo` al re-sembrar, para no borrar un
+  backfill hecho a mano.
+- Validación en `Comercio::reglas()` y `Mensajero::reglas()` — en el modelo para que el CRUD
+  de la fase 3 las reutilice en vez de reescribirlas: `nombre` obligatorio, `codigo` único
+  cuando no es nulo, `mensajero_id` existente. El duplicado por mayúsculas se comprueba
+  contra `nombre_normalizado`, no contra `nombre`, o se colaría.
+
+Verificado, no sólo ejecutado: `migrate:fresh --seed` deja **93 comercios en 6 mensajeros**
+con el reparto exacto de la tabla de referencia de §4 (21/7/21/9/21/14), re-sembrar sigue
+dando 93, y 11 tests cubren los invariantes (columna generada, unicidad case-insensitive,
+`codigo` único admitiendo varios nulos, `restrictOnDelete` y las reglas de validación).
+
+**Los tests pasaron a correr sobre Postgres.** El `phpunit.xml` del esqueleto usaba sqlite en
+memoria, que no sabe ejecutar el `regexp_replace` de la columna generada: sobre sqlite no se
+puede ni migrar. Se comprobó con un test de sonda antes de cambiarlo. Ahora usan la base
+`panel_testing`, que `bootstrap.sh` crea si no existe; host y credenciales salen del `.env`,
+así que en `phpunit.xml` no hay ninguna clave.
 
 ### Fase 2 — El endpoint
 
@@ -285,6 +301,16 @@ bot.
       12/08/2026, sin responder todavía.**
 - [ ] **Backfill de `codigo`** para los comercios que lo tengan. Se puede extraer del portal
       en una corrida del bot y precargar en el seeder, y así el cruce nace exacto.
+      **Confirmado el 12/08/2026 que el `rutas.xlsx` no sirve para esto**: de los 93 nombres
+      sólo dos traen el código incrustado (`(287) Good Id S.L` y `(237) RAYO E ILUMINACIÓN
+      SL`). La cifra de §3 —11 de 93 sin código— sale del cruce con el portal, no del Excel.
+      Los 93 se sembraron con `codigo` nulo. Pendiente decidir si esos dos se despiezan en
+      `nombre` + `codigo`, que cambiaría el `nombre` que el bot cruza hoy contra el portal.
+- [ ] **Un nombre del maestro parece traer dos comercios en una celda:**
+      `"LIANCHUN HONG, S.L.\t- LOOKAT"` (fila 43 del Excel, con un tabulador dentro). Se
+      sembró tal cual, sin inventar nada, pero es casi seguro que el portal devuelve uno de
+      los dos y no los dos juntos, así que ese comercio no va a cruzar. **A confirmar con el
+      cliente**: si son dos, son dos filas.
 - [ ] **Dónde se despliega el panel** y cómo lo alcanza el bot. Ligado a la decisión, aún
       abierta en el repo del bot, de dónde corre el bot en producción (hoy WSL2 + cron).
 - [ ] **Reflejar en la documentación del bot** que Vallecas ya tiene ruta 6 (§4).
@@ -310,9 +336,17 @@ Estructura: una hoja llamada `Envios`, 93 filas de datos, encabezados en la fila
 Las otras seis (`Origen Dirección`, `Horario`, `Origen Localidad`, `Origen CP`,
 `Origen Provincia`, `Origen País`) son informativas y **se descartan**.
 
-El plan es convertirlo una sola vez a CSV en `database/seeders/data/` y sembrar desde ahí,
+Se convirtió una sola vez a `database/seeders/data/comercios.csv` y se siembra desde ahí,
 sin añadir ninguna librería de Excel a PHP: son 93 filas y una conversión única. Ese CSV
 **también está en `.gitignore`**, por el mismo motivo que el Excel.
+
+La conversión se hizo con un script de usar y tirar dentro del contenedor, leyendo el xlsx
+como lo que es —un zip con XML— con `ext-zip` y `SimpleXML`, que ya están en la imagen. Dos
+detalles por si hay que repetirla: el `Target` de la hoja viene absoluto
+(`/xl/worksheets/sheet1.xml`) y este fichero **no tiene `sharedStrings.xml`**, las cadenas
+van embebidas en las celdas.
+
+El CSV tiene cabecera `nombre,mensajero,ruta` y el seeder la verifica antes de nada.
 
 ## 10. Seguridad
 

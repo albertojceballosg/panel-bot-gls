@@ -23,8 +23,14 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="sqlite"/>
-        <env name="DB_DATABASE" value=":memory:"/>
+        <!-- Postgres y no sqlite en memoria, aunque sea más lento: el esquema usa
+             una columna generada con regexp_replace (CONTEXTO.md §4) que sqlite no
+             sabe ejecutar, así que sobre sqlite no se puede ni migrar. Probar sobre
+             un motor distinto al de producción dejaría sin cubrir justo el
+             guardarraíl contra duplicados.
+             Host, usuario y contraseña salen del .env: aquí no va ninguna clave. -->
+        <env name="DB_CONNECTION" value="pgsql"/>
+        <env name="DB_DATABASE" value="panel_testing"/>
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
