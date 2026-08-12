@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\AuditLog;
 use App\Models\Courier;
 use App\Models\Merchant;
 use App\Models\PickupRoute;
@@ -37,9 +38,15 @@ class RouteMasterSeeder extends Seeder
             throw new RuntimeException('El CSV no tiene ni una fila de datos.');
         }
 
-        $pickupRoutes = $this->seedPickupRoutes($rows);
-        $this->seedCouriers($rows, $pickupRoutes);
-        $this->seedMerchants($rows, $pickupRoutes);
+        // Cargar el maestro no es el cambio de nadie: son 105 registros que
+        // taparían en el historial los cambios de verdad (§4).
+        $pickupRoutes = AuditLog::withoutRecording(function () use ($rows) {
+            $pickupRoutes = $this->seedPickupRoutes($rows);
+            $this->seedCouriers($rows, $pickupRoutes);
+            $this->seedMerchants($rows, $pickupRoutes);
+
+            return $pickupRoutes;
+        });
 
         $this->command?->info(sprintf(
             '  Maestro cargado: %d comercios en %d rutas.',

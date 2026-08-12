@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\Auditable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOneThrough;
@@ -11,9 +12,18 @@ use Illuminate\Validation\Rule;
 /** Un comercio del maestro: el remitente cuyos paquetes recoge una ruta. */
 class Merchant extends Model
 {
-    use SoftDeletes;
+    use Auditable, SoftDeletes;
 
     protected $fillable = ['name', 'code', 'pickup_route_id'];
+
+    /**
+     * `normalized_name` es columna generada: se deriva de `name`, así que en el
+     * historial sería ruido duplicado.
+     */
+    protected function auditExclude(): array
+    {
+        return ['normalized_name'];
+    }
 
     protected function casts(): array
     {

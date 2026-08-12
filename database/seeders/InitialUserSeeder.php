@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\AuditLog;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use RuntimeException;
@@ -34,12 +35,19 @@ class InitialUserSeeder extends Seeder
 
         // withTrashed: si la cuenta estaba dada de baja, se revive en vez de
         // chocar contra el índice único parcial de `users` (§4).
-        $user = User::withTrashed()->firstOrNew(['email' => $data['email']]);
+        //
+        // Sin historial: sembrar la cuenta de arranque no es el cambio de
+        // nadie, y además aquí no hay sesión de la que sacar un autor.
+        $user = AuditLog::withoutRecording(function () use ($data) {
+            $user = User::withTrashed()->firstOrNew(['email' => $data['email']]);
 
-        $user->name = $data['name'];
-        $user->password = $data['password'];   // el cast 'hashed' lo cifra
-        $user->deleted_at = null;
-        $user->save();
+            $user->name = $data['name'];
+            $user->password = $data['password'];   // el cast 'hashed' lo cifra
+            $user->deleted_at = null;
+            $user->save();
+
+            return $user;
+        });
 
         // El email sí, la contraseña no: los logs y la salida de consola acaban
         // pegados en sitios que no controlamos.

@@ -208,6 +208,38 @@ que §3 llama peor que romperse.
 **El seeder resucita**: si algo que estaba dado de baja vuelve a aparecer en el maestro de
 origen, es que está vigente. Se revive en vez de crear una fila nueva.
 
+### Historial de cambios
+
+`audit_logs`: una fila por cambio, y no se actualiza ni se borra nunca — el modelo lo impide
+en `booted()`. Cubre `PickupRoute`, `Courier`, `Merchant` y `User`.
+
+**Una sola tabla para todas las entidades**, no una por modelo: cuatro tablas de historial
+serían cuatro consultas para responder una sola pregunta.
+
+**Polimórfica (`auditable_type` / `auditable_id`), no un `module` de texto libre.** Guarda la
+clase del modelo, así que no se puede escribir mal; un typo en un string parte el historial
+en dos sin que salte nada.
+
+**En `UPDATE` sólo se guardan los campos que cambiaron**, y si el diff queda vacío no se
+escribe fila. Un formulario que se guarda sin tocar nada es lo más normal del mundo, y ese
+ruido enterraría los cambios de verdad. En alta y baja va el registro completo.
+
+**`user_email` desnormalizado** además del `user_id`: el historial tiene que poder leerse
+dentro de dos años, con el usuario dado de baja o con el correo cambiado. Sin sesión —seeder,
+consola, cron— el autor queda como "Sistema", que es preferible a inventárselo.
+
+**Los `$hidden` del modelo quedan fuera del historial** (§10): lo que no se expone en un JSON
+tampoco debe acabar copiado en una tabla que no se borra nunca.
+
+**El log se escribe sin `try`/`catch`.** Si no se puede registrar el cambio, el cambio no se
+da por hecho: un maestro que se mueve sin dejar rastro es el fallo silencioso que §3 llama
+peor que romperse.
+
+Lo que **no** se construyó, habiendo un diseño de referencia que lo traía: resolvers de FK
+—hay una sola FK que resolver, `pickup_route_id`—, `skipAudit` como concepto general —no hay
+ni una escritura derivada—, log manual para documentos con líneas —no hay documentos— y panel
+global de auditoría con filtros y paginación, que §5 ya descarta por tamaño.
+
 **La columna generada.** Postgres es *case-sensitive*, así que la unicidad del nombre hay
 que hacerla explícita:
 
@@ -310,7 +342,7 @@ docker compose logs -f vite
 | 1 | Migraciones, modelos y seeder | **Hecha** (12/08/2026) |
 | 2 | `GET /api/rutas` + token + test de contrato | **Código hecho** (12/08/2026), falta cerrar §3 con el bot |
 | 3 | CRUD Livewire de comercios y mensajeros | — |
-| 4 | Historial de cambios | **Alcance sin confirmar** — ver §8 |
+| 4 | Historial de cambios | **Hecha** (12/08/2026), falta la pantalla (fase 3) |
 | 5 | Imagen de producción y despliegue | — |
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -403,11 +435,30 @@ Verificado con peticiones reales, no sólo con tests: `401` sin token y con toke
 - Login propio (~1 componente Livewire + `Auth::attempt`), sin registro público. El usuario
   ya existe: lo siembra `InitialUserSeeder` desde el `.env` (§10). Falta sólo la pantalla.
 - Blade y Tailwind escritos a mano; nada de librerías de componentes.
+- **La pantalla del historial** (fase 4, ya construido por debajo): un parcial reutilizable
+  que reciba `$model->auditLogs()` y pinte la línea de tiempo con "Campo / Antes / Después".
+  Necesita un mapa de etiquetas por entidad (`pickup_route_id` → «Ruta») para no enseñar IDs
+  crudos; con una sola FK que resolver, es un array pequeño, no un sistema.
 
-### Fase 4 — Historial de cambios
+### Fase 4 — Historial de cambios. Hecha el 12/08/2026
 
-Pendiente de confirmar alcance (§8). Si entra: `updated_by` en ambas tablas y una tabla de
-historial con qué comercio cambió de ruta, cuándo y quién.
+Se adelantó a la fase 3 a propósito: si el CRUD se construye primero, meter el historial
+después obliga a volver a pasar por cada `save()`, cada componente Livewire y sus tests.
+
+- `audit_logs` polimórfica, `AuditLog` inmutable y el trait `Auditable` sobre los eventos de
+  Eloquent. Aplicado a `PickupRoute`, `Courier`, `Merchant` y **también `User`**.
+- **Sin `updated_by` en ninguna tabla.** "Cargó" y "última modificación" se derivan del propio
+  historial (primer `CREATE`, último `UPDATE`). Dos columnas que dicen lo mismo que la tabla
+  de historial acaban discrepando de ella.
+- Los seeders escriben con `AuditLog::withoutRecording()`: cargar el maestro son 105
+  registros que taparían los cambios de verdad, y además ahí no hay sesión de la que sacar
+  un autor.
+
+Verificado sobre la base real reproduciendo el escenario que motivó la tabla: mover COBO
+FAMILY de la ruta 3 a la 5 deja una entrada con el campo, el antes, el después, el autor y
+la hora. 16 tests cubren el resto, incluido que la contraseña nunca llega al historial.
+
+**Falta la pantalla**, que va con el CRUD de la fase 3.
 
 ### Fase 5 — Producción
 
@@ -423,12 +474,6 @@ bot.
       real es la forma de comprobarlo de punta a punta.
 - [ ] **¿Pest?** §7 pedía el test de contrato en Pest y está en PHPUnit, porque Pest no está
       instalado y añadirlo choca con la regla 2 de `CLAUDE.md`. Decisión pendiente.
-- [ ] **Historial de cambios: ¿dentro o fuera del alcance?** Argumento a favor: este maestro
-      determina si un envío se marca como incidencia. Si alguien mueve COBO FAMILY de la
-      ruta 3 a la 5 y el informe del día siguiente cambia, hay que poder saber quién y
-      cuándo — el propósito del sistema entero es control de calidad, y el dato que lo
-      gobierna sin historial es un punto ciego. Coste bajo. **Preguntado al usuario el
-      12/08/2026, sin responder todavía.**
 - [ ] **Backfill de `codigo`** para los comercios que lo tengan. Se puede extraer del portal
       en una corrida del bot y precargar en el seeder, y así el cruce nace exacto.
       **Confirmado el 12/08/2026 que el `rutas.xlsx` no sirve para esto**: de los 93 nombres
@@ -483,6 +528,10 @@ El CSV tiene cabecera `name,courier,pickup_route` y el seeder la verifica antes 
 - `RUTAS_TOKEN`, `DB_PASSWORD` y `SEED_USER_PASSWORD` viven solo en `.env`, que está en
   `.gitignore`. **Ninguna clave debe escribirse en este documento ni en ningún otro del
   repo**, ni como ejemplo.
+- **El historial nunca copia campos sensibles.** `Auditable` excluye los `$hidden` del
+  modelo, que es lo que deja el hash de la contraseña y el `remember_token` fuera de una
+  tabla que no se borra nunca. Atado al `#[Hidden]` del modelo y no a una segunda lista, para
+  que no se desincronicen; hay un test que lo fija.
 - El usuario con el que se entra al panel lo crea `InitialUserSeeder` leyendo
   `SEED_USER_EMAIL` y `SEED_USER_PASSWORD` del `.env` vía `config('panel.initial_user')`.
   **No tiene valores por defecto a propósito**: revienta si faltan, en vez de inventarse una

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Models\Concerns\Auditable;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
@@ -16,7 +17,9 @@ use Illuminate\Notifications\Notifiable;
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, Notifiable, SoftDeletes;
+    // El hash de la contraseña y el remember_token quedan fuera del
+    // historial por el #[Hidden] de arriba: ver Auditable::auditExcludedFields().
+    use Auditable, HasFactory, Notifiable, SoftDeletes;
 
     /**
      * Get the attributes that should be cast.
