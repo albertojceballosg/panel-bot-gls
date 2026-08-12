@@ -1,0 +1,54 @@
+name: panel-bot-gls
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        UID: "${UID:-1000}"
+        GID: "${GID:-1000}"
+    volumes:
+      - .:/var/www/html
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      # El resto lo lee Laravel del .env montado en el volumen.
+      DB_HOST: postgres
+      DB_PORT: 5432
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Sin Laravel todavía no hay artisan; bootstrap.sh arranca los servicios al final.
+    restart: unless-stopped
+
+  vite:
+    image: node:22-bookworm-slim
+    working_dir: /var/www/html
+    volumes:
+      - .:/var/www/html
+    ports:
+      - "${VITE_PORT:-5173}:5173"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: "${DB_DATABASE:-panel}"
+      POSTGRES_USER: "${DB_USERNAME:-panel}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD:-secret}"
+    ports:
+      # Publicado para poder conectar un cliente desde el host. Si ya tenés un
+      # Postgres local ocupando el 5432, cambiá DB_PORT_HOST en el .env.
+      - "${DB_PORT_HOST:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-panel} -d ${DB_DATABASE:-panel}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
