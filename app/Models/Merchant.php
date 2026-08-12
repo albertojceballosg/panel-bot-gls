@@ -13,16 +13,16 @@ class Merchant extends Model
 {
     use SoftDeletes;
 
-    protected $fillable = ['name', 'code', 'route_id'];
+    protected $fillable = ['name', 'code', 'pickup_route_id'];
 
     protected function casts(): array
     {
         return ['code' => 'integer'];
     }
 
-    public function route(): BelongsTo
+    public function pickupRoute(): BelongsTo
     {
-        return $this->belongsTo(Route::class);
+        return $this->belongsTo(PickupRoute::class);
     }
 
     /**
@@ -34,11 +34,11 @@ class Merchant extends Model
     {
         return $this->hasOneThrough(
             Courier::class,
-            Route::class,
-            'id',        // routes.id
-            'route_id',  // couriers.route_id
-            'route_id',  // merchants.route_id
-            'id',        // routes.id
+            PickupRoute::class,
+            'id',                // pickup_routes.id
+            'pickup_route_id',   // couriers.pickup_route_id
+            'pickup_route_id',   // merchants.pickup_route_id
+            'id',                // pickup_routes.id
         );
     }
 
@@ -95,7 +95,11 @@ class Merchant extends Model
 
             // Obligatoria: un comercio sin ruta no se puede agrupar (§3). Y la
             // ruta tiene que estar viva, no dada de baja.
-            'route_id' => ['required', 'integer', Rule::exists('routes', 'id')->whereNull('deleted_at')],
+            'pickup_route_id' => [
+                'required',
+                'integer',
+                Rule::exists('pickup_routes', 'id')->whereNull('deleted_at'),
+            ],
         ];
     }
 }

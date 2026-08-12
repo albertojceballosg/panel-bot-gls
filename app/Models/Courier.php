@@ -8,16 +8,16 @@ use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Validation\Rule;
 
-/** El mensajero que conduce una ruta. */
+/** El mensajero que conduce una ruta de recogida. */
 class Courier extends Model
 {
     use SoftDeletes;
 
-    protected $fillable = ['name', 'route_id'];
+    protected $fillable = ['name', 'pickup_route_id'];
 
-    public function route(): BelongsTo
+    public function pickupRoute(): BelongsTo
     {
-        return $this->belongsTo(Route::class);
+        return $this->belongsTo(PickupRoute::class);
     }
 
     /**
@@ -29,11 +29,11 @@ class Courier extends Model
     {
         return $this->hasManyThrough(
             Merchant::class,
-            Route::class,
-            'id',        // routes.id
-            'route_id',  // merchants.route_id
-            'route_id',  // couriers.route_id
-            'id',        // routes.id
+            PickupRoute::class,
+            'id',                // pickup_routes.id
+            'pickup_route_id',   // merchants.pickup_route_id
+            'pickup_route_id',   // couriers.pickup_route_id
+            'id',                // pickup_routes.id
         );
     }
 
@@ -58,11 +58,11 @@ class Courier extends Model
 
             // Única: una ruta la lleva un solo mensajero, o el `mensajero` del
             // contrato quedaría ambiguo. Nullable: puede no tener ruta asignada.
-            'route_id' => [
+            'pickup_route_id' => [
                 'nullable',
                 'integer',
-                Rule::exists('routes', 'id')->whereNull('deleted_at'),
-                Rule::unique('couriers', 'route_id')->ignore($id)->whereNull('deleted_at'),
+                Rule::exists('pickup_routes', 'id')->whereNull('deleted_at'),
+                Rule::unique('couriers', 'pickup_route_id')->ignore($id)->whereNull('deleted_at'),
             ],
         ];
     }

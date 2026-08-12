@@ -41,8 +41,8 @@ return new class extends Migration
             // restrictOnDelete: con borrado pasivo esta FK sólo se dispara ante
             // un forceDelete. El caso normal lo corta el modelo, que se niega a
             // borrar una ruta que todavía tiene comercios vivos.
-            $table->foreignId('route_id')
-                ->constrained('routes')
+            $table->foreignId('pickup_route_id')
+                ->constrained('pickup_routes')
                 ->restrictOnDelete();
 
             $table->softDeletes();

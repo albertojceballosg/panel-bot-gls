@@ -10,12 +10,12 @@ use Illuminate\Validation\Rule;
 use RuntimeException;
 
 /**
- * Una ruta de recogida.
+ * Una ruta de recogida: por qué comercios pasa una furgoneta (CONTEXTO.md §0).
  *
- * OJO al importarlo: el nombre choca con `Illuminate\Support\Facades\Route`.
- * En un fichero que necesite las dos cosas, hay que aliasar una.
+ * `PickupRoute` y no `Route` para no colisionar con `Illuminate\Support\Facades\Route`
+ * en ningún fichero que necesite las dos cosas.
  */
-class Route extends Model
+class PickupRoute extends Model
 {
     use SoftDeletes;
 
@@ -30,13 +30,13 @@ class Route extends Model
      */
     protected static function booted(): void
     {
-        static::deleting(function (self $route) {
-            if ($route->merchants()->exists()) {
+        static::deleting(function (self $pickupRoute) {
+            if ($pickupRoute->merchants()->exists()) {
                 throw new RuntimeException(sprintf(
                     'La ruta "%s" todavía tiene %d comercios. Muévelos a otra ruta antes '.
                     'de darla de baja.',
-                    $route->name,
-                    $route->merchants()->count(),
+                    $pickupRoute->name,
+                    $pickupRoute->merchants()->count(),
                 ));
             }
         });
@@ -49,10 +49,10 @@ class Route extends Model
     }
 
     /**
-     * Quien conduce la ruta hoy. hasOne y no hasMany porque `couriers.route_id`
-     * es único entre los vivos: el contrato sirve un solo `mensajero` por
-     * comercio (§3). Puede no haber ninguno — una ruta sin mensajero asignado
-     * sigue siendo una ruta válida con sus comercios.
+     * Quien conduce la ruta hoy. hasOne y no hasMany porque
+     * `couriers.pickup_route_id` es único entre los vivos: el contrato sirve un
+     * solo `mensajero` por comercio (§3). Puede no haber ninguno — una ruta sin
+     * mensajero asignado sigue siendo una ruta válida con sus comercios.
      */
     public function courier(): HasOne
     {
@@ -75,7 +75,7 @@ class Route extends Model
                 // whereNull('deleted_at') para que la regla diga lo mismo que el
                 // índice parcial: si no, avisaría de un choque con una ruta
                 // dada de baja que la base sí deja crear.
-                Rule::unique('routes', 'name')->ignore($id)->whereNull('deleted_at'),
+                Rule::unique('pickup_routes', 'name')->ignore($id)->whereNull('deleted_at'),
             ],
         ];
     }

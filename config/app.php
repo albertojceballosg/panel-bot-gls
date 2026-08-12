@@ -63,9 +63,13 @@ return [
     | will be used by the PHP date and date-time functions. The timezone
     | is set to "UTC" by default as it is suitable for most use cases.
     |
+    | Cableado a APP_TIMEZONE: el esqueleto de Laravel lo trae fijo a "UTC" y
+    | no lee el .env, así que el APP_TIMEZONE=Europe/Madrid no hacía nada. El
+    | `generado` del contrato (§3) tiene que ir con la zona de Madrid.
+    |
     */
 
-    'timezone' => 'UTC',
+    'timezone' => env('APP_TIMEZONE', 'UTC'),
 
     /*
     |--------------------------------------------------------------------------

@@ -101,8 +101,9 @@ Las rutas dejaron de ser un número estático para ser entidades con nombre libr
 desde el panel (§4). `1`…`6` pasan a ser etiquetas, no identidad. En consecuencia el endpoint
 servirá `"ruta": "1"` (texto) donde el contrato dice `"ruta": 1` (número).
 
-Que la fase 2 no esté construida es lo que hace barato este cambio: **hoy no hay una sola
-línea sirviendo ese JSON**, así que el coste está entero en el lado del bot.
+**El endpoint ya lo sirve así** desde el 12/08/2026 (fase 2), y el test de contrato lo fija:
+`"ruta": "1"`, texto. El coste del cambio está entero en el lado del bot, y mientras no se
+cierre, el bot sigue tirando del `rutas.xlsx` sin romperse.
 
 Lo que hay que comprobar en `bot-gls` antes de dar la fase 2 por cerrada:
 
@@ -131,46 +132,51 @@ Mientras no se cierre, el `rutas.xlsx` sigue siendo el recambio y el bot no se r
 ## 4. Modelo de datos
 
 ```
-routes:     id, name (unique†), deleted_at, timestamps
-couriers:   id, name (unique†), route_id (nullable, unique†), deleted_at, timestamps
-merchants:  id, name, normalized_name (generada, unique†),
-            code (int, nullable, unique†), route_id, deleted_at, timestamps
+pickup_routes:  id, name (unique†), deleted_at, timestamps
+couriers:       id, name (unique†), pickup_route_id (nullable, unique†),
+                deleted_at, timestamps
+merchants:      id, name, normalized_name (generada, unique†),
+                code (int, nullable, unique†), pickup_route_id, deleted_at, timestamps
 
 † único sólo entre los vivos — ver "Borrados pasivos" más abajo.
 ```
 
 ```
-routes 1──1 couriers        quién la conduce hoy
+pickup_routes 1──1 couriers      quién la conduce hoy
   │
-  └──* merchants            de qué se compone la ruta  ← el maestro
+  └──* merchants                  de qué se compone la ruta  ← el maestro
 ```
 
-> **Idioma.** El código va en inglés —clases, tablas, columnas, métodos— y los comentarios y
-> esta documentación en castellano (§5). El comercio es `Merchant` y no `Store` porque varios
-> del maestro son importadores o mayoristas, no tiendas. **Las claves del JSON de §3 siguen en
+> **Idioma y nombres.** El código va en inglés —clases, tablas, columnas, métodos— y los
+> comentarios y esta documentación en castellano (§5). El comercio es `Merchant` y no `Store`
+> porque varios del maestro son importadores o mayoristas, no tiendas. La ruta es
+> `PickupRoute` y no `Route` para no colisionar con `Illuminate\Support\Facades\Route`. **Las claves del JSON de §3 siguen en
 > castellano**: son el contrato con el bot y renombrarlas obligaría a tocar `bot-gls` por un
 > motivo puramente cosmético.
 
 **La ruta es la entidad duradera; el mensajero es lo que rota.** Un mensajero deja la
-empresa y entra otro, pero la ruta y sus comercios siguen siendo los mismos. Por eso `routes`
-es una tabla propia con nombre libre, `couriers.route_id` dice quién la lleva ahora, y el
+empresa y entra otro, pero la ruta y sus comercios siguen siendo los mismos. Por eso
+`pickup_routes` es una tabla propia con nombre libre, `couriers.pickup_route_id` dice quién
+la lleva ahora, y el
 comercio pertenece a la **ruta**, no a la persona. Dar de baja al mensajero no toca el
 maestro: hay un test que lo fija.
 
 **Por qué el comercio no apunta al mensajero.** Si lo hiciera, borrar a esa persona dejaría
-al comercio huérfano de ruta, que es justo el dato que el bot necesita. Con `merchants.route_id`
+al comercio huérfano de ruta, que es justo el dato que el bot necesita. Con
+`merchants.pickup_route_id`
 hay **una sola fuente de verdad**: es imposible que un comercio esté en una ruta distinta a
 la que dice su ruta. El `mensajero` que pide el contrato sale derivado
-(`Merchant → Route → Courier`, un `hasOneThrough`), no de una FK propia.
+(`Merchant → PickupRoute → Courier`, un `hasOneThrough`), no de una FK propia.
 
-**`couriers.route_id` es único** porque el contrato sirve un solo `mensajero` por comercio
+**`couriers.pickup_route_id` es único** porque el contrato sirve un solo `mensajero` por comercio
 (§3): dos mensajeros en la misma ruta lo dejarían ambiguo. Es nullable —un mensajero recién
 dado de alta puede no tener ruta— y en Postgres el índice único deja pasar varios NULL, así
 que puede haber varios sin asignar.
 
-**Las FK, y por qué cada una borra como borra.** `merchants.route_id` es `restrictOnDelete`:
+**Las FK, y por qué cada una borra como borra.** `merchants.pickup_route_id` es
+`restrictOnDelete`:
 cargarse una ruta con comercios dentro tiene que ser una decisión explícita, no un efecto
-colateral. `couriers.route_id` es `nullOnDelete`: borrar una ruta no puede borrar a una
+colateral. `couriers.pickup_route_id` es `nullOnDelete`: borrar una ruta no puede borrar a una
 persona. Con borrado pasivo ninguna de las dos llega a dispararse casi nunca; quedan como
 red para el `forceDelete`.
 
@@ -184,7 +190,8 @@ consulta el modelo y arrastra el scope de `SoftDeletes`.
 
 **Los índices únicos son parciales, con `WHERE deleted_at IS NULL`.** No es un adorno: un
 índice único normal cuenta también las filas dadas de baja, así que el sustituto de un
-mensajero no podría heredar su ruta —la fila del saliente seguiría ocupando `route_id`— ni
+mensajero no podría heredar su ruta —la fila del saliente seguiría ocupando
+`pickup_route_id`— ni
 podría volverse a dar de alta un comercio con el nombre de uno retirado. El Blueprint de
 Laravel no expresa índices parciales, de ahí el `DB::statement` en las migraciones.
 
@@ -192,7 +199,7 @@ Laravel no expresa índices parciales, de ahí el `DB::statement` en las migraci
 que el índice. Si no, el panel avisaría de un choque con un registro invisible que la base sí
 deja crear.
 
-**`Route` se niega a darse de baja si le quedan comercios vivos**, y eso vive en el modelo, no
+**`PickupRoute` se niega a darse de baja si le quedan comercios vivos**, y eso vive en el modelo, no
 en la FK: sin `DELETE` real no hay nada que restringir. Sin esa comprobación, dar de baja una
 ruta dejaría a sus comercios apuntando a una ruta invisible — seguirían en la base, fuera del
 maestro que consume el bot, y sin que nadie lo note. Que es justo la clase de fallo silencioso
@@ -243,7 +250,7 @@ renombrar desde el panel sin tocar nada más.
 | UI | **Livewire 4.4.0** + **Tailwind 4** vía **Vite 8**, Blade escrito a mano |
 | BD | **Postgres 17** |
 | Auth del panel | Login propio, ~1 componente Livewire |
-| Auth de la API | Bearer estático contra `config()` |
+| Auth de la API | Bearer estático contra `config('panel.bot_token')` |
 | Terceros | Solo `livewire/livewire` |
 
 **Lo descartado, y por qué** — para que nadie lo reabra sin motivo nuevo:
@@ -301,7 +308,7 @@ docker compose logs -f vite
 |---|---|---|
 | 0 | Docker, scaffold de Laravel, Livewire, Tailwind | **Hecha** (12/08/2026) |
 | 1 | Migraciones, modelos y seeder | **Hecha** (12/08/2026) |
-| 2 | `GET /api/rutas` + token + test de contrato | — |
+| 2 | `GET /api/rutas` + token + test de contrato | **Código hecho** (12/08/2026), falta cerrar §3 con el bot |
 | 3 | CRUD Livewire de comercios y mensajeros | — |
 | 4 | Historial de cambios | **Alcance sin confirmar** — ver §8 |
 | 5 | Imagen de producción y despliegue | — |
@@ -323,17 +330,17 @@ navegador llega a Vite por `localhost` sin más.
 
 ### Fase 1 — Hecha el 12/08/2026
 
-- Migraciones de `routes`, `couriers` y `merchants` según §4, con la columna generada, los
+- Migraciones de `pickup_routes`, `couriers` y `merchants` según §4, con la columna generada, los
   índices únicos parciales, el borrado pasivo y las FK con el borrado que le toca a cada una.
-- Modelos con `Route hasMany Merchant`, `Route hasOne Courier` y el `mensajero` de un
+- Modelos con `PickupRoute hasMany Merchant`, `PickupRoute hasOne Courier` y el `mensajero` de un
   comercio derivado por `hasOneThrough`, no por FK propia.
 - `RouteMasterSeeder` carga los 93 comercios desde el CSV. **Ver §9: el fichero de origen
   no está en el repo.** Es idempotente y no pisa `code` al re-sembrar, para no borrar un
   backfill hecho a mano. Aborta si un mensajero aparece en dos rutas o una ruta con dos
   mensajeros: son los dos choques que dejarían el contrato ambiguo.
-- Validación en `Route::rules()`, `Courier::rules()` y `Merchant::rules()` — en el modelo
+- Validación en `PickupRoute::rules()`, `Courier::rules()` y `Merchant::rules()` — en el modelo
   para que el CRUD de la fase 3 las reutilice en vez de reescribirlas: `name` obligatorio,
-  `code` único cuando no es nulo, `route_id` existente y no ocupada por otro mensajero. El
+  `code` único cuando no es nulo, `pickup_route_id` existente y no ocupada por otro mensajero. El
   duplicado por mayúsculas se comprueba contra `normalized_name`, no contra `name`, o
   se colaría.
 
@@ -356,15 +363,35 @@ puede ni migrar. Se comprobó con un test de sonda antes de cambiarlo. Ahora usa
 `panel_testing`, que `bootstrap.sh` crea si no existe; host y credenciales salen del `.env`,
 así que en `phpunit.xml` no hay ninguna clave.
 
-### Fase 2 — El endpoint
+### Fase 2 — El endpoint. Código hecho el 12/08/2026
 
-- `GET /api/rutas` devolviendo exactamente el JSON de §3.
-- Middleware que compara el header `Authorization: Bearer …` contra `config('rutas.token')`
-  (que lee `RUTAS_TOKEN` del `.env`). `401` si no cuadra.
-- **Test Pest contra el contrato**: forma del JSON, tipos, `ruta`/`codigo` nulables, y que
-  sin token o con token malo responde `401`. Este test es lo que impide que un refactor
-  futuro rompa al bot en silencio.
-- Sin sesión, sin CSRF, sin dependencias de la UI.
+- `GET /api/rutas` → `RouteMasterController`, invocable y sin estado. La URL se queda en
+  castellano y las claves del JSON también: son el contrato, no nombres nuestros.
+- `VerifyBotToken` compara el `Authorization: Bearer …` contra `config('panel.bot_token')`
+  (que lee `RUTAS_TOKEN` del `.env`) con `hash_equals`, en tiempo constante. `401` si no
+  cuadra, y **también si el token no está configurado**: `hash_equals('', '')` es `true`, así
+  que sin esa comprobación un despliegue que se olvide del `RUTAS_TOKEN` dejaría el maestro
+  del cliente abierto a cualquiera. Cerrado por defecto.
+- Registrado en el grupo `api` de `bootstrap/app.php`, que no arrastra sesión ni CSRF.
+- **Test de contrato en `ApiContractTest`** (14 casos): forma del JSON, que las claves sigan
+  en castellano, tipos (`codigo` entero de verdad, no `"287"`), `mensajero`/`codigo` nulables,
+  nombre sin normalizar, lista siempre completa, bajas fuera, `401` en los tres escenarios de
+  token, y que no haya N+1.
+
+**Va en PHPUnit y no en Pest**, que §7 pedía: Pest no está instalado y añadirlo choca con la
+regla 2 de `CLAUDE.md`. Los 42 tests del repo usan PHPUnit; lo que da valor aquí es la
+cobertura del contrato, no el framework. Si se quiere Pest, es una decisión aparte.
+
+**Dos cosas que encontró el propio test y que estaban mal desde el esqueleto:**
+
+1. `config/app.php` traía `'timezone' => 'UTC'` a fuego y **no leía `APP_TIMEZONE`**, así que
+   el `Europe/Madrid` del `.env` no hacía nada y `generado` habría salido en UTC, incumpliendo
+   §3. Ahora es `env('APP_TIMEZONE', 'UTC')`.
+2. El `phpunit.xml` no fijaba zona, así que los tests corrían en UTC — el mismo error que el
+   de sqlite: probar en algo distinto a lo que se despliega.
+
+Verificado con peticiones reales, no sólo con tests: `401` sin token y con token incorrecto,
+`200` con el bueno, 93 comercios, `"generado": "2026-08-12T15:31:27+02:00"` y las seis rutas.
 
 ### Fase 3 — CRUD
 
@@ -391,8 +418,11 @@ bot.
 ## 8. Pendientes y decisiones abiertas
 
 - [ ] **Cerrar con el repo del bot el cambio de `ruta` a texto** (§3). Es lo único que
-      bloquea dar la fase 2 por terminada, y cuanto antes se hable, más barato: hoy no hay
-      nada sirviendo ese JSON.
+      bloquea dar la fase 2 por terminada: el código está hecho y probado, falta el acuerdo.
+      Apuntar el `RUTAS_URL` del bot a `http://localhost:8000/api/rutas` y hacer una corrida
+      real es la forma de comprobarlo de punta a punta.
+- [ ] **¿Pest?** §7 pedía el test de contrato en Pest y está en PHPUnit, porque Pest no está
+      instalado y añadirlo choca con la regla 2 de `CLAUDE.md`. Decisión pendiente.
 - [ ] **Historial de cambios: ¿dentro o fuera del alcance?** Argumento a favor: este maestro
       determina si un envío se marca como incidencia. Si alguien mueve COBO FAMILY de la
       ruta 3 a la 5 y el informe del día siguiente cambia, hay que poder saber quién y
@@ -446,7 +476,7 @@ detalles por si hay que repetirla: el `Target` de la hoja viene absoluto
 (`/xl/worksheets/sheet1.xml`) y este fichero **no tiene `sharedStrings.xml`**, las cadenas
 van embebidas en las celdas.
 
-El CSV tiene cabecera `name,courier,route` y el seeder la verifica antes de nada.
+El CSV tiene cabecera `name,courier,pickup_route` y el seeder la verifica antes de nada.
 
 ## 10. Seguridad
 

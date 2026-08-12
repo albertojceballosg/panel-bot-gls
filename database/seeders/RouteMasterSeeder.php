@@ -4,7 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\Courier;
 use App\Models\Merchant;
-use App\Models\Route;
+use App\Models\PickupRoute;
 use Illuminate\Database\Seeder;
 use RuntimeException;
 
@@ -37,26 +37,26 @@ class RouteMasterSeeder extends Seeder
             throw new RuntimeException('El CSV no tiene ni una fila de datos.');
         }
 
-        $routes = $this->seedRoutes($rows);
-        $this->seedCouriers($rows, $routes);
-        $this->seedMerchants($rows, $routes);
+        $pickupRoutes = $this->seedPickupRoutes($rows);
+        $this->seedCouriers($rows, $pickupRoutes);
+        $this->seedMerchants($rows, $pickupRoutes);
 
         $this->command?->info(sprintf(
             '  Maestro cargado: %d comercios en %d rutas.',
             count($rows),
-            count($routes),
+            count($pickupRoutes),
         ));
     }
 
     /**
-     * @return list<array{name: string, courier: string, route: string}>
+     * @return list<array{name: string, courier: string, pickup_route: string}>
      */
     private function read(string $path): array
     {
         $file = fopen($path, 'r');
         $header = fgetcsv($file, escape: '');
 
-        $expected = ['name', 'courier', 'route'];
+        $expected = ['name', 'courier', 'pickup_route'];
         if ($header !== $expected) {
             throw new RuntimeException(
                 'La cabecera del CSV debería ser "'.implode(',', $expected).
@@ -69,7 +69,7 @@ class RouteMasterSeeder extends Seeder
 
         while ($row = fgetcsv($file, escape: '')) {
             $n++;
-            [$name, $courier, $routeText] = array_pad($row, 3, '');
+            [$name, $courier, $pickupRouteText] = array_pad($row, 3, '');
 
             // El nombre se guarda tal cual viene: es lo que sirve el contrato
             // (§3, "sin normalizar") y lo que el bot cruza contra el portal.
@@ -82,16 +82,16 @@ class RouteMasterSeeder extends Seeder
 
             // La ruta del CSV ("1".."6") pasa a ser el NOMBRE de la ruta, no un
             // número: son etiquetas renombrables desde el panel (§4).
-            $route = trim($routeText);
+            $pickupRoute = trim($pickupRouteText);
 
-            if ($route === '') {
+            if ($pickupRoute === '') {
                 throw new RuntimeException(
                     "Fila {$n}: el comercio \"{$name}\" no trae ruta, y sin ruta no se ".
                     'puede agrupar. Ver CONTEXTO.md §4.'
                 );
             }
 
-            $rows[] = ['name' => $name, 'courier' => $courier, 'route' => $route];
+            $rows[] = ['name' => $name, 'courier' => $courier, 'pickup_route' => $pickupRoute];
         }
 
         fclose($file);
@@ -100,79 +100,79 @@ class RouteMasterSeeder extends Seeder
     }
 
     /**
-     * @param  list<array{name: string, courier: string, route: string}>  $rows
-     * @return array<string, Route> Indexado por nombre de ruta.
+     * @param  list<array{name: string, courier: string, pickup_route: string}>  $rows
+     * @return array<string, PickupRoute> Indexado por nombre de ruta.
      */
-    private function seedRoutes(array $rows): array
+    private function seedPickupRoutes(array $rows): array
     {
-        $routes = [];
+        $pickupRoutes = [];
 
-        foreach (array_unique(array_column($rows, 'route')) as $name) {
-            $routes[$name] = $this->revive(Route::withTrashed()->firstOrNew(['name' => $name]));
+        foreach (array_unique(array_column($rows, 'pickup_route')) as $name) {
+            $pickupRoutes[$name] = $this->revive(PickupRoute::withTrashed()->firstOrNew(['name' => $name]));
         }
 
-        return $routes;
+        return $pickupRoutes;
     }
 
     /**
-     * @param  list<array{name: string, courier: string, route: string}>  $rows
-     * @param  array<string, Route>  $routes
+     * @param  list<array{name: string, courier: string, pickup_route: string}>  $rows
+     * @param  array<string, PickupRoute>  $pickupRoutes
      */
-    private function seedCouriers(array $rows, array $routes): void
+    private function seedCouriers(array $rows, array $pickupRoutes): void
     {
         // Un mensajero, una ruta, y una ruta un mensajero (§4). Si el origen no
         // lo cumple hay que parar: el contrato sirve un único `mensajero` por
         // comercio, así que cualquiera de los dos choques lo dejaría ambiguo.
-        $routesPerCourier = [];
+        $routeNamesPerCourier = [];
         foreach ($rows as $row) {
-            $routesPerCourier[$row['courier']][$row['route']] = true;
+            $routeNamesPerCourier[$row['courier']][$row['pickup_route']] = true;
         }
 
-        $taken = [];
+        $takenBy = [];
 
-        foreach ($routesPerCourier as $name => $theirs) {
+        foreach ($routeNamesPerCourier as $courierName => $theirs) {
             if (count($theirs) > 1) {
                 throw new RuntimeException(sprintf(
                     'El mensajero "%s" aparece en %d rutas distintas (%s). Un mensajero '.
                     'conduce una sola ruta: ver CONTEXTO.md §4.',
-                    $name,
+                    $courierName,
                     count($theirs),
                     implode(', ', array_keys($theirs)),
                 ));
             }
 
-            $route = array_key_first($theirs);
+            $routeName = array_key_first($theirs);
 
-            if (isset($taken[$route])) {
+            if (isset($takenBy[$routeName])) {
                 throw new RuntimeException(sprintf(
                     'La ruta "%s" tiene dos mensajeros ("%s" y "%s"). El contrato sirve '.
                     'uno solo por comercio: ver CONTEXTO.md §3.',
-                    $route,
-                    $taken[$route],
-                    $name,
+                    $routeName,
+                    $takenBy[$routeName],
+                    $courierName,
                 ));
             }
 
-            $taken[$route] = $name;
+            $takenBy[$routeName] = $courierName;
 
-            $courier = Courier::withTrashed()->firstOrNew(['name' => $name]);
-            $courier->route_id = $routes[$route]->id;
+            $courier = Courier::withTrashed()->firstOrNew(['name' => $courierName]);
+            $courier->pickup_route_id = $pickupRoutes[$routeName]->id;
             $this->revive($courier);
         }
     }
 
     /**
-     * @param  list<array{name: string, courier: string, route: string}>  $rows
-     * @param  array<string, Route>  $routes
+     * @param  list<array{name: string, courier: string, pickup_route: string}>  $rows
+     * @param  array<string, PickupRoute>  $pickupRoutes
      */
-    private function seedMerchants(array $rows, array $routes): void
+    private function seedMerchants(array $rows, array $pickupRoutes): void
     {
         foreach ($rows as $row) {
             // Deliberadamente no se toca `code`: el maestro de origen no lo
             // trae, así que nace nulo, pero si alguien ya lo rellenó a mano (o
             // lo hizo el backfill del §8) volver a sembrar no debe borrárselo.
             $merchant = Merchant::withTrashed()->firstOrNew(['name' => $row['name']]);
-            $merchant->route_id = $routes[$row['route']]->id;
+            $merchant->pickup_route_id = $pickupRoutes[$row['pickup_route']]->id;
             $this->revive($merchant);
         }
     }

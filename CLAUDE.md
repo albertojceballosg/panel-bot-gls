@@ -24,7 +24,8 @@ no hace falta abrir otro repositorio.
 ## Escribir código
 
 - **El código en inglés, el resto en castellano.** Clases, tablas, columnas, métodos y
-  variables van en inglés (`Merchant`, `routes.name`, `Route::rules()`). Los comentarios, los
+  variables van en inglés (`Merchant`, `pickup_routes.name`, `PickupRoute::rules()`). Los
+  comentarios, los
   mensajes de error de cara al usuario y la documentación, en castellano. Decidido el
   12/08/2026; antes estaba todo en castellano.
 - **Una excepción que no se renombra**: las claves del JSON de `GET /api/rutas` (`nombre`,

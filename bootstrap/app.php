@@ -8,6 +8,9 @@ use Illuminate\Http\Request;
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
+        // El grupo `api` no lleva sesión ni CSRF: GET /api/rutas no puede
+        // depender de nada de la interfaz (CONTEXTO.md §2).
+        api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )

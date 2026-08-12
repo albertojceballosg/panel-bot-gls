@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * La ruta es la entidad duradera del maestro (CONTEXTO.md §4).
+     * La ruta de recogida es la entidad duradera del maestro (CONTEXTO.md §4).
      *
      * Los mensajeros rotan —uno deja la empresa y entra otro— pero la ruta y
      * los comercios que la componen siguen ahí. Por eso la ruta es una tabla
@@ -17,7 +17,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('routes', function (Blueprint $table) {
+        Schema::create('pickup_routes', function (Blueprint $table) {
             $table->id();
 
             // Nombre libre, renombrable desde el panel. Hoy el maestro las
@@ -33,11 +33,11 @@ return new class extends Migration
         // las borradas, así que un nombre liberado al dar de baja una ruta no
         // se podría reutilizar nunca. Postgres lo resuelve con un índice
         // parcial; Laravel no lo expresa en el Blueprint, de ahí el SQL.
-        DB::statement('CREATE UNIQUE INDEX routes_name_unique ON routes (name) WHERE deleted_at IS NULL');
+        DB::statement('CREATE UNIQUE INDEX pickup_routes_name_unique ON pickup_routes (name) WHERE deleted_at IS NULL');
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('routes');
+        Schema::dropIfExists('pickup_routes');
     }
 };

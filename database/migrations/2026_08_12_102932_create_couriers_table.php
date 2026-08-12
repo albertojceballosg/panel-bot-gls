@@ -25,9 +25,9 @@ return new class extends Migration
             // nullOnDelete: borrar la ruta a lo bruto no debe borrar a la
             // persona. Con borrado pasivo esto casi nunca llega a dispararse,
             // pero cubre el forceDelete.
-            $table->foreignId('route_id')
+            $table->foreignId('pickup_route_id')
                 ->nullable()
-                ->constrained('routes')
+                ->constrained('pickup_routes')
                 ->nullOnDelete();
 
             $table->softDeletes();
@@ -36,14 +36,15 @@ return new class extends Migration
 
         // Ambos únicos sólo entre los vivos: si contasen a los dados de baja,
         // el sustituto de un mensajero no podría heredar ni su nombre ni su
-        // ruta, que es exactamente el caso de uso que motivó tener `routes`.
+        // ruta, que es exactamente el caso de uso que motivó tener
+        // `pickup_routes`.
         DB::statement('CREATE UNIQUE INDEX couriers_name_unique ON couriers (name) WHERE deleted_at IS NULL');
 
         // Una ruta la lleva un solo mensajero: el contrato sirve un único
         // `mensajero` por comercio (§3), así que dos la dejarían ambigua. El
         // índice parcial además ignora los NULL, de modo que puede haber
         // varios mensajeros sin ruta asignada.
-        DB::statement('CREATE UNIQUE INDEX couriers_route_id_unique ON couriers (route_id) WHERE deleted_at IS NULL');
+        DB::statement('CREATE UNIQUE INDEX couriers_pickup_route_id_unique ON couriers (pickup_route_id) WHERE deleted_at IS NULL');
     }
 
     public function down(): void

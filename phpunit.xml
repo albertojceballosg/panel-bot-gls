@@ -19,6 +19,9 @@
     </source>
     <php>
         <env name="APP_ENV" value="testing"/>
+        <!-- El `generado` del contrato es ISO-8601 con zona Europe/Madrid (§3).
+             Sin esto los tests corren en UTC y no comprueban lo que se despliega. -->
+        <env name="APP_TIMEZONE" value="Europe/Madrid"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>

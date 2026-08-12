@@ -22,4 +22,20 @@ return [
         'password' => env('SEED_USER_PASSWORD'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Token de GET /api/rutas
+    |--------------------------------------------------------------------------
+    |
+    | El bot lo manda como `Authorization: Bearer <token>`. Debe coincidir con
+    | el RUTAS_TOKEN del .env de bot-gls.
+    |
+    | Es lo único que protege el endpoint, y el endpoint devuelve el maestro
+    | completo del cliente (§10): tratarlo como una contraseña. Sin valor, el
+    | middleware corta todas las peticiones — nunca abre.
+    |
+    */
+
+    'bot_token' => env('RUTAS_TOKEN'),
+
 ];
