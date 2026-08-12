@@ -454,7 +454,7 @@ necesita pantallas donde enchufarse.
 |---|---|---|
 | 0 | Layout, navegación y estilos | **Hecho** (12/08/2026) |
 | 1 | Login | **Hecho** (12/08/2026) |
-| 2 | CRUD de rutas | — |
+| 2 | CRUD de rutas | **Hecho** (12/08/2026) |
 | 3 | CRUD de mensajeros: nombre y ruta que conduce, que puede quedar sin asignar | — |
 | 4 | Comercios: listado con búsqueda y filtro por ruta, paginación, alta/edición de nombre, código y **ruta** (no mensajero: el comercio pertenece a la ruta, §4) | — |
 | 5 | Pantalla del historial | — |
@@ -485,6 +485,63 @@ Verificado con una sesión HTTP real, no sólo con tests: `GET /` sin sesión re
 `/login`, el POST al endpoint de Livewire entra y redirige, y `GET /` ya autenticado pinta
 93 comercios, 6 rutas y 6 mensajeros. La build de producción de Tailwind genera las clases de
 los ficheros nuevos, emoji en el nombre incluido.
+
+#### Módulo 2 — CRUD de rutas. Hecho el 12/08/2026
+
+Alta, edición, baja y reactivación. Las dadas de baja se ocultan tras una casilla: son la
+excepción. La baja de una ruta con comercios la corta el modelo (§4) y la pantalla la
+convierte en un aviso legible en vez de en un error de servidor.
+
+**Lenguaje visual.** Referencia de TailAdmin —barra lateral oscura y ancha, acento
+azul-índigo, tarjetas de borde suave— **como estilo, no como dependencia**: §5 lo descartó
+por su peso, y copiar el aire no instala nada. El acento y los grises de la carcasa viven en
+`@theme` de `app.css`, en un solo sitio.
+
+**Primitivas en `components/ui/`**: `button`, `field`, `input`, `card`, `alert`,
+`page-header`, `empty-state`, `nav-link`. Cada una hace una cosa y son las que evitan repetir
+Tailwind pantalla a pantalla. Los enlaces de la barra lateral se declaran en un array del
+layout: **añadir un módulo es una línea**, no tocar el marcado.
+
+**No se extrajo todavía la abstracción común de los CRUD.** Con un solo ejemplo escrito se
+adivinaría mal; sale cuando el de mensajeros enseñe qué se repite de verdad.
+
+**Verificado mirándolo**, no sólo con tests: se condujo un Chromium headless contra el panel
+—reutilizando el Playwright que ya tiene el repo del bot, sin instalar nada— para entrar,
+recorrer las pantallas y capturarlas. Eso destapó tres cosas que ni `curl` ni los tests veían:
+la concordancia de número del mensaje de baja («1 comercios»), que la tabla se salía de la
+pantalla en móvil, y restos de depuración en la base de desarrollo. Las tres, corregidas.
+
+> **Lección, que ya van dos.** La fase 0 dio por bueno el hot reload sin abrir un navegador, y
+> era falso. Aquí lo mismo: el `curl` dice que el servidor responde, no que la pantalla se
+> vea. Para cualquier cosa con interfaz, hay que mirarla.
+
+**Ampliado el 12/08/2026** con lo que se le pidió al módulo, y que marca el patrón para los
+tres CRUD siguientes:
+
+- **Alta y edición en un modal** (`ui/modal`), no en un panel sobre la tabla.
+- **Editar y dar de baja como iconos** (`ui/icon-button`). El `label` es obligatorio en la
+  primitiva: al quitar el texto visible, sin él la acción queda muda para un lector de
+  pantalla y sin pista al pasar el ratón.
+- **Filtro por nombre de ruta y de mensajero** a la vez, con `ilike` y **escapando `%` y `_`**
+  del usuario — si no, buscar «100%» traería cualquier cosa que empiece por 100.
+- **Paginación de 10**, y al filtrar se vuelve a la primera página o te quedas mirando una que
+  ya no existe.
+- **Doble envío, en los dos lados.** El botón se desactiva mientras la acción está en vuelo,
+  pero eso es cosmético: no cubre el doble clic que llega antes de que reaccione el JS, ni dos
+  pestañas, ni una petición reenviada. El que de verdad lo impide es `PreventsDoubleSubmit`,
+  un cerrojo atómico (`Cache::lock` sobre `cache_locks`) por usuario y acción, que se suelta en
+  `finally`. **Aplicado también al login**, donde además evita que un doble clic gaste dos de
+  los cinco intentos.
+- **Transacciones**: el guardado va dentro de `DB::transaction`, que envuelve también la
+  escritura del historial —se dispara en un evento del modelo—, así que un fallo no deja la
+  fila sin auditoría ni al revés. Hay un test que lo comprueba desde dentro del evento.
+- **Validación en el servidor**, con las reglas del modelo (§7, fase 1).
+
+**`lang/es/validation.php`.** El panel está entero en castellano pero Laravel sólo trae los
+mensajes en inglés y no había `lang/`, así que respondía «The name has already been taken».
+Se vio en una captura, no en los 91 tests que pasaban. Está en un solo fichero para que el
+mensaje de una regla sea el mismo en todas las pantallas, con `attributes` para que diga
+«ruta» y no «pickup_route_id».
 
 ### Fase 4 — Historial de cambios. Hecha el 12/08/2026
 

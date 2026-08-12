@@ -3,7 +3,25 @@
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
 @source '../../storage/framework/views/*.php';
 
+@source '../views';
+
 @theme {
     --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
         'Segoe UI Symbol', 'Noto Color Emoji';
+
+    /* Acento del panel. Un solo color con peso: lo demás son grises, así que
+       el azul marca siempre "esto es accionable" o "esto está activo".
+       Referencia visual de TailAdmin (§5: como estilo, no como dependencia). */
+    --color-brand-50: #eef2ff;
+    --color-brand-100: #e0e7ff;
+    --color-brand-200: #c7d2fe;
+    --color-brand-400: #7c8cf0;
+    --color-brand-500: #3c50e0;
+    --color-brand-600: #3444c4;
+    --color-brand-700: #2a37a0;
+
+    /* Fondo de la barra lateral y de las cabeceras oscuras. */
+    --color-shell-800: #24303f;
+    --color-shell-900: #1c2434;
+    --color-shell-950: #161d29;
 }

@@ -17,6 +17,7 @@ Route::middleware('guest')->group(function () {
 
 Route::middleware('auth')->group(function () {
     Route::livewire('/', 'home')->name('home');
+    Route::livewire('/pickup-routes', 'pickup-routes')->name('pickup-routes');
 
     // POST y no GET: un enlace de salida se puede disparar desde fuera, o lo
     // precarga el navegador.

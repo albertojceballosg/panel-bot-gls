@@ -32,12 +32,15 @@ class PickupRoute extends Model
     protected static function booted(): void
     {
         static::deleting(function (self $pickupRoute) {
-            if ($pickupRoute->merchants()->exists()) {
+            $vivos = $pickupRoute->merchants()->count();
+
+            if ($vivos > 0) {
                 throw new RuntimeException(sprintf(
-                    'La ruta "%s" todavía tiene %d comercios. Muévelos a otra ruta antes '.
-                    'de darla de baja.',
+                    'La ruta "%s" todavía tiene %d %s. %s a otra ruta antes de darla de baja.',
                     $pickupRoute->name,
-                    $pickupRoute->merchants()->count(),
+                    $vivos,
+                    $vivos === 1 ? 'comercio' : 'comercios',
+                    $vivos === 1 ? 'Muévelo' : 'Muévelos',
                 ));
             }
         });

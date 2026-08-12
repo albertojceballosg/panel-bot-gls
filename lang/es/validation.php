@@ -1,0 +1,51 @@
+<?php
+
+/*
+| Mensajes de validación en castellano.
+|
+| Laravel sólo trae los ingleses, así que sin este fichero el panel —que está
+| entero en castellano— respondía «The name has already been taken». Está aquí
+| y no repartido por los componentes para que el mensaje de una misma regla sea
+| el mismo en todas las pantallas.
+|
+| Sólo están las reglas que se usan. Añadir una regla nueva es añadir su línea.
+*/
+
+return [
+
+    'boolean' => 'El campo :attribute tiene que ser sí o no.',
+    'email' => 'Eso no parece un correo válido.',
+    'exists' => 'La opción elegida no existe.',
+    'integer' => 'El campo :attribute tiene que ser un número entero.',
+    'required' => 'El campo :attribute es obligatorio.',
+    'string' => 'El campo :attribute tiene que ser texto.',
+    'unique' => 'Ya existe un registro con ese :attribute.',
+
+    'max' => [
+        'array' => 'El campo :attribute no puede tener más de :max elementos.',
+        'file' => 'El campo :attribute no puede ocupar más de :max kilobytes.',
+        'numeric' => 'El campo :attribute no puede ser mayor que :max.',
+        'string' => 'El campo :attribute no puede tener más de :max caracteres.',
+    ],
+
+    'min' => [
+        'array' => 'El campo :attribute tiene que tener al menos :min elementos.',
+        'file' => 'El campo :attribute tiene que ocupar al menos :min kilobytes.',
+        'numeric' => 'El campo :attribute tiene que ser al menos :min.',
+        'string' => 'El campo :attribute tiene que tener al menos :min caracteres.',
+    ],
+
+    /*
+    | Cómo se llaman los campos de cara al usuario. Sin esto los mensajes dirían
+    | «El campo pickup_route_id es obligatorio», que no le sirve a nadie.
+    */
+    'attributes' => [
+        'code' => 'código',
+        'courier_id' => 'mensajero',
+        'email' => 'correo',
+        'name' => 'nombre',
+        'password' => 'contraseña',
+        'pickup_route_id' => 'ruta',
+    ],
+
+];
