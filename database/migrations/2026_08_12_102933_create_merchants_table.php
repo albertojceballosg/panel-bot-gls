@@ -9,12 +9,12 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('comercios', function (Blueprint $table) {
+        Schema::create('merchants', function (Blueprint $table) {
             $table->id();
 
             // Tal cual viene del maestro: es lo que sirve el JSON del contrato
             // (§3, "sin normalizar"). Normalizarlo es cosa del bot.
-            $table->string('nombre');
+            $table->string('name');
 
             // Postgres es case-sensitive, así que la unicidad del nombre hay que
             // hacerla explícita. Al ser columna generada se mantiene sola y no
@@ -24,12 +24,12 @@ return new class extends Migration
             // duplicados evidentes en el panel, NO un sustituto del cruce del
             // bot, que además quita sufijos (S.L / SLU) y hace fuzzy. Duplicar
             // esa lógica aquí sería tenerla en dos repos y que se separen.
-            $table->string('nombre_normalizado')
-                ->storedAs("upper(regexp_replace(trim(nombre), '\\s+', ' ', 'g'))");
+            $table->string('normalized_name')
+                ->storedAs("upper(regexp_replace(trim(name), '\\s+', ' ', 'g'))");
 
             // El SourceDepartment del portal. Opcional: 11 de los 93 comercios
             // no lo tienen (§3).
-            $table->integer('codigo')->nullable();
+            $table->integer('code')->nullable();
 
             // El comercio pertenece a la RUTA, no al mensajero. Es lo que hace
             // que cambiar de mensajero no toque el maestro: la ruta y sus
@@ -41,8 +41,8 @@ return new class extends Migration
             // restrictOnDelete: con borrado pasivo esta FK sólo se dispara ante
             // un forceDelete. El caso normal lo corta el modelo, que se niega a
             // borrar una ruta que todavía tiene comercios vivos.
-            $table->foreignId('ruta_id')
-                ->constrained('rutas')
+            $table->foreignId('route_id')
+                ->constrained('routes')
                 ->restrictOnDelete();
 
             $table->softDeletes();
@@ -51,15 +51,15 @@ return new class extends Migration
 
         // Únicos sólo entre los vivos: dar de baja un comercio tiene que
         // liberar su nombre y su código para poder volver a darlo de alta.
-        DB::statement('CREATE UNIQUE INDEX comercios_nombre_normalizado_unique ON comercios (nombre_normalizado) WHERE deleted_at IS NULL');
+        DB::statement('CREATE UNIQUE INDEX merchants_normalized_name_unique ON merchants (normalized_name) WHERE deleted_at IS NULL');
 
         // En Postgres un índice único ya deja pasar varios NULL, que es lo que
         // pide "único cuando no es nulo"; el WHERE sólo añade lo de los vivos.
-        DB::statement('CREATE UNIQUE INDEX comercios_codigo_unique ON comercios (codigo) WHERE deleted_at IS NULL');
+        DB::statement('CREATE UNIQUE INDEX merchants_code_unique ON merchants (code) WHERE deleted_at IS NULL');
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('comercios');
+        Schema::dropIfExists('merchants');
     }
 };

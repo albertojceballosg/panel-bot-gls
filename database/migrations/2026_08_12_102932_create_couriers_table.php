@@ -15,9 +15,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('mensajeros', function (Blueprint $table) {
+        Schema::create('couriers', function (Blueprint $table) {
             $table->id();
-            $table->string('nombre');
+            $table->string('name');
 
             // Nullable: un mensajero recién dado de alta puede no tener ruta
             // asignada todavía.
@@ -25,9 +25,9 @@ return new class extends Migration
             // nullOnDelete: borrar la ruta a lo bruto no debe borrar a la
             // persona. Con borrado pasivo esto casi nunca llega a dispararse,
             // pero cubre el forceDelete.
-            $table->foreignId('ruta_id')
+            $table->foreignId('route_id')
                 ->nullable()
-                ->constrained('rutas')
+                ->constrained('routes')
                 ->nullOnDelete();
 
             $table->softDeletes();
@@ -36,18 +36,18 @@ return new class extends Migration
 
         // Ambos únicos sólo entre los vivos: si contasen a los dados de baja,
         // el sustituto de un mensajero no podría heredar ni su nombre ni su
-        // ruta, que es exactamente el caso de uso que motivó tener `rutas`.
-        DB::statement('CREATE UNIQUE INDEX mensajeros_nombre_unique ON mensajeros (nombre) WHERE deleted_at IS NULL');
+        // ruta, que es exactamente el caso de uso que motivó tener `routes`.
+        DB::statement('CREATE UNIQUE INDEX couriers_name_unique ON couriers (name) WHERE deleted_at IS NULL');
 
         // Una ruta la lleva un solo mensajero: el contrato sirve un único
         // `mensajero` por comercio (§3), así que dos la dejarían ambigua. El
         // índice parcial además ignora los NULL, de modo que puede haber
         // varios mensajeros sin ruta asignada.
-        DB::statement('CREATE UNIQUE INDEX mensajeros_ruta_id_unique ON mensajeros (ruta_id) WHERE deleted_at IS NULL');
+        DB::statement('CREATE UNIQUE INDEX couriers_route_id_unique ON couriers (route_id) WHERE deleted_at IS NULL');
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('mensajeros');
+        Schema::dropIfExists('couriers');
     }
 };

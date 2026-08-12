@@ -131,40 +131,46 @@ Mientras no se cierre, el `rutas.xlsx` sigue siendo el recambio y el bot no se r
 ## 4. Modelo de datos
 
 ```
-rutas:       id, nombre (unique†), deleted_at, timestamps
-mensajeros:  id, nombre (unique†), ruta_id (nullable, unique†), deleted_at, timestamps
-comercios:   id, nombre, nombre_normalizado (generada, unique†),
-             codigo (int, nullable, unique†), ruta_id, deleted_at, timestamps
+routes:     id, name (unique†), deleted_at, timestamps
+couriers:   id, name (unique†), route_id (nullable, unique†), deleted_at, timestamps
+merchants:  id, name, normalized_name (generada, unique†),
+            code (int, nullable, unique†), route_id, deleted_at, timestamps
 
 † único sólo entre los vivos — ver "Borrados pasivos" más abajo.
 ```
 
 ```
-rutas 1──1 mensajeros        quién la conduce hoy
+routes 1──1 couriers        quién la conduce hoy
   │
-  └──* comercios             de qué se compone la ruta  ← el maestro
+  └──* merchants            de qué se compone la ruta  ← el maestro
 ```
 
+> **Idioma.** El código va en inglés —clases, tablas, columnas, métodos— y los comentarios y
+> esta documentación en castellano (§5). El comercio es `Merchant` y no `Store` porque varios
+> del maestro son importadores o mayoristas, no tiendas. **Las claves del JSON de §3 siguen en
+> castellano**: son el contrato con el bot y renombrarlas obligaría a tocar `bot-gls` por un
+> motivo puramente cosmético.
+
 **La ruta es la entidad duradera; el mensajero es lo que rota.** Un mensajero deja la
-empresa y entra otro, pero la ruta y sus comercios siguen siendo los mismos. Por eso `rutas`
-es una tabla propia con nombre libre, `mensajeros.ruta_id` dice quién la lleva ahora, y el
+empresa y entra otro, pero la ruta y sus comercios siguen siendo los mismos. Por eso `routes`
+es una tabla propia con nombre libre, `couriers.route_id` dice quién la lleva ahora, y el
 comercio pertenece a la **ruta**, no a la persona. Dar de baja al mensajero no toca el
 maestro: hay un test que lo fija.
 
 **Por qué el comercio no apunta al mensajero.** Si lo hiciera, borrar a esa persona dejaría
-al comercio huérfano de ruta, que es justo el dato que el bot necesita. Con `comercios.ruta_id`
+al comercio huérfano de ruta, que es justo el dato que el bot necesita. Con `merchants.route_id`
 hay **una sola fuente de verdad**: es imposible que un comercio esté en una ruta distinta a
 la que dice su ruta. El `mensajero` que pide el contrato sale derivado
-(`comercio → ruta → mensajero`, un `hasOneThrough`), no de una FK propia.
+(`Merchant → Route → Courier`, un `hasOneThrough`), no de una FK propia.
 
-**`mensajeros.ruta_id` es único** porque el contrato sirve un solo `mensajero` por comercio
+**`couriers.route_id` es único** porque el contrato sirve un solo `mensajero` por comercio
 (§3): dos mensajeros en la misma ruta lo dejarían ambiguo. Es nullable —un mensajero recién
 dado de alta puede no tener ruta— y en Postgres el índice único deja pasar varios NULL, así
 que puede haber varios sin asignar.
 
-**Las FK, y por qué cada una borra como borra.** `comercios.ruta_id` es `restrictOnDelete`:
+**Las FK, y por qué cada una borra como borra.** `merchants.route_id` es `restrictOnDelete`:
 cargarse una ruta con comercios dentro tiene que ser una decisión explícita, no un efecto
-colateral. `mensajeros.ruta_id` es `nullOnDelete`: borrar una ruta no puede borrar a una
+colateral. `couriers.route_id` es `nullOnDelete`: borrar una ruta no puede borrar a una
 persona. Con borrado pasivo ninguna de las dos llega a dispararse casi nunca; quedan como
 red para el `forceDelete`.
 
@@ -178,7 +184,7 @@ consulta el modelo y arrastra el scope de `SoftDeletes`.
 
 **Los índices únicos son parciales, con `WHERE deleted_at IS NULL`.** No es un adorno: un
 índice único normal cuenta también las filas dadas de baja, así que el sustituto de un
-mensajero no podría heredar su ruta —la fila del saliente seguiría ocupando `ruta_id`— ni
+mensajero no podría heredar su ruta —la fila del saliente seguiría ocupando `route_id`— ni
 podría volverse a dar de alta un comercio con el nombre de uno retirado. El Blueprint de
 Laravel no expresa índices parciales, de ahí el `DB::statement` en las migraciones.
 
@@ -186,7 +192,7 @@ Laravel no expresa índices parciales, de ahí el `DB::statement` en las migraci
 que el índice. Si no, el panel avisaría de un choque con un registro invisible que la base sí
 deja crear.
 
-**`Ruta` se niega a darse de baja si le quedan comercios vivos**, y eso vive en el modelo, no
+**`Route` se niega a darse de baja si le quedan comercios vivos**, y eso vive en el modelo, no
 en la FK: sin `DELETE` real no hay nada que restringir. Sin esa comprobación, dar de baja una
 ruta dejaría a sus comercios apuntando a una ruta invisible — seguirían en la base, fuera del
 maestro que consume el bot, y sin que nadie lo note. Que es justo la clase de fallo silencioso
@@ -199,10 +205,10 @@ origen, es que está vigente. Se revive en vez de crear una fila nueva.
 que hacerla explícita:
 
 ```php
-$table->string('nombre');                       // tal cual — es lo que sirve el JSON
-$table->string('nombre_normalizado')
-      ->storedAs("upper(regexp_replace(trim(nombre), '\\s+', ' ', 'g'))");
-$table->unique('nombre_normalizado');
+$table->string('name');                         // tal cual — es lo que sirve el JSON
+$table->string('normalized_name')
+      ->storedAs("upper(regexp_replace(trim(name), '\\s+', ' ', 'g'))");
+// El índice va aparte y es parcial: ver "Borrados pasivos".
 ```
 
 Se mantiene sola y no se puede desincronizar. **Alcance deliberadamente limitado:** es un
@@ -317,18 +323,18 @@ navegador llega a Vite por `localhost` sin más.
 
 ### Fase 1 — Hecha el 12/08/2026
 
-- Migraciones de `rutas`, `mensajeros` y `comercios` según §4, con la columna generada, los
+- Migraciones de `routes`, `couriers` y `merchants` según §4, con la columna generada, los
   índices únicos parciales, el borrado pasivo y las FK con el borrado que le toca a cada una.
-- Modelos con `Ruta hasMany Comercio`, `Ruta hasOne Mensajero` y el `mensajero` de un
+- Modelos con `Route hasMany Merchant`, `Route hasOne Courier` y el `mensajero` de un
   comercio derivado por `hasOneThrough`, no por FK propia.
-- `MaestroRutasSeeder` carga los 93 comercios desde el CSV. **Ver §9: el fichero de origen
-  no está en el repo.** Es idempotente y no pisa `codigo` al re-sembrar, para no borrar un
+- `RouteMasterSeeder` carga los 93 comercios desde el CSV. **Ver §9: el fichero de origen
+  no está en el repo.** Es idempotente y no pisa `code` al re-sembrar, para no borrar un
   backfill hecho a mano. Aborta si un mensajero aparece en dos rutas o una ruta con dos
   mensajeros: son los dos choques que dejarían el contrato ambiguo.
-- Validación en `Ruta::reglas()`, `Mensajero::reglas()` y `Comercio::reglas()` — en el modelo
-  para que el CRUD de la fase 3 las reutilice en vez de reescribirlas: `nombre` obligatorio,
-  `codigo` único cuando no es nulo, `ruta_id` existente y no ocupada por otro mensajero. El
-  duplicado por mayúsculas se comprueba contra `nombre_normalizado`, no contra `nombre`, o
+- Validación en `Route::rules()`, `Courier::rules()` y `Merchant::rules()` — en el modelo
+  para que el CRUD de la fase 3 las reutilice en vez de reescribirlas: `name` obligatorio,
+  `code` único cuando no es nulo, `route_id` existente y no ocupada por otro mensajero. El
+  duplicado por mayúsculas se comprueba contra `normalized_name`, no contra `name`, o
   se colaría.
 
 **El modelo se rehízo el mismo día**, antes de que hubiera nada montado encima: en el primer
@@ -368,7 +374,7 @@ así que en `phpunit.xml` no hay ninguna clave.
 - CRUD de rutas: nombre, renombrable.
 - CRUD de mensajeros: nombre y ruta que conduce, que puede quedar sin asignar.
 - Login propio (~1 componente Livewire + `Auth::attempt`), sin registro público. El usuario
-  ya existe: lo siembra `UsuarioInicialSeeder` desde el `.env` (§10). Falta sólo la pantalla.
+  ya existe: lo siembra `InitialUserSeeder` desde el `.env` (§10). Falta sólo la pantalla.
 - Blade y Tailwind escritos a mano; nada de librerías de componentes.
 
 ### Fase 4 — Historial de cambios
@@ -430,7 +436,7 @@ Estructura: una hoja llamada `Envios`, 93 filas de datos, encabezados en la fila
 Las otras seis (`Origen Dirección`, `Horario`, `Origen Localidad`, `Origen CP`,
 `Origen Provincia`, `Origen País`) son informativas y **se descartan**.
 
-Se convirtió una sola vez a `database/seeders/data/comercios.csv` y se siembra desde ahí,
+Se convirtió una sola vez a `database/seeders/data/merchants.csv` y se siembra desde ahí,
 sin añadir ninguna librería de Excel a PHP: son 93 filas y una conversión única. Ese CSV
 **también está en `.gitignore`**, por el mismo motivo que el Excel.
 
@@ -440,15 +446,15 @@ detalles por si hay que repetirla: el `Target` de la hoja viene absoluto
 (`/xl/worksheets/sheet1.xml`) y este fichero **no tiene `sharedStrings.xml`**, las cadenas
 van embebidas en las celdas.
 
-El CSV tiene cabecera `nombre,mensajero,ruta` y el seeder la verifica antes de nada.
+El CSV tiene cabecera `name,courier,route` y el seeder la verifica antes de nada.
 
 ## 10. Seguridad
 
 - `RUTAS_TOKEN`, `DB_PASSWORD` y `SEED_USER_PASSWORD` viven solo en `.env`, que está en
   `.gitignore`. **Ninguna clave debe escribirse en este documento ni en ningún otro del
   repo**, ni como ejemplo.
-- El usuario con el que se entra al panel lo crea `UsuarioInicialSeeder` leyendo
-  `SEED_USER_EMAIL` y `SEED_USER_PASSWORD` del `.env` vía `config('panel.usuario_inicial')`.
+- El usuario con el que se entra al panel lo crea `InitialUserSeeder` leyendo
+  `SEED_USER_EMAIL` y `SEED_USER_PASSWORD` del `.env` vía `config('panel.initial_user')`.
   **No tiene valores por defecto a propósito**: revienta si faltan, en vez de inventarse una
   contraseña de desarrollo que acabaría en producción el día que alguien despliegue sin
   mirar. Es idempotente, así que volver a pasarlo con otra clave en el `.env` es la forma de

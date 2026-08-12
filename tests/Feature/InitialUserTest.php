@@ -3,29 +3,29 @@
 namespace Tests\Feature;
 
 use App\Models\User;
-use Database\Seeders\UsuarioInicialSeeder;
+use Database\Seeders\InitialUserSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use RuntimeException;
 use Tests\TestCase;
 
-class UsuarioInicialTest extends TestCase
+class InitialUserTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function configurar(string $email = 'alguien@panel.local', string $password = 'una-contraseña-larga'): void
+    private function configure(string $email = 'alguien@panel.local', string $password = 'una-contraseña-larga'): void
     {
-        config(['panel.usuario_inicial' => [
-            'nombre' => 'Panel',
+        config(['panel.initial_user' => [
+            'name' => 'Panel',
             'email' => $email,
             'password' => $password,
         ]]);
     }
 
-    public function test_el_seeder_crea_un_usuario_con_el_que_se_puede_entrar(): void
+    public function test_the_seeder_creates_a_user_that_can_log_in(): void
     {
-        $this->configurar();
-        $this->seed(UsuarioInicialSeeder::class);
+        $this->configure();
+        $this->seed(InitialUserSeeder::class);
 
         $this->assertTrue(Auth::attempt([
             'email' => 'alguien@panel.local',
@@ -33,43 +33,43 @@ class UsuarioInicialTest extends TestCase
         ]));
     }
 
-    public function test_la_contrasena_se_guarda_cifrada(): void
+    public function test_the_password_is_stored_hashed(): void
     {
-        $this->configurar();
-        $this->seed(UsuarioInicialSeeder::class);
+        $this->configure();
+        $this->seed(InitialUserSeeder::class);
 
         $this->assertNotSame('una-contraseña-larga', User::first()->password);
     }
 
-    public function test_repetirlo_actualiza_la_contrasena_en_vez_de_fallar(): void
+    public function test_running_it_again_updates_the_password_instead_of_failing(): void
     {
-        $this->configurar();
-        $this->seed(UsuarioInicialSeeder::class);
+        $this->configure();
+        $this->seed(InitialUserSeeder::class);
 
         // Es la forma de recuperar el acceso: cambiar el .env y volver a sembrar.
-        $this->configurar(password: 'otra-contraseña-distinta');
-        $this->seed(UsuarioInicialSeeder::class);
+        $this->configure(password: 'otra-contraseña-distinta');
+        $this->seed(InitialUserSeeder::class);
 
         $this->assertSame(1, User::count());
         $this->assertFalse(Auth::attempt(['email' => 'alguien@panel.local', 'password' => 'una-contraseña-larga']));
         $this->assertTrue(Auth::attempt(['email' => 'alguien@panel.local', 'password' => 'otra-contraseña-distinta']));
     }
 
-    public function test_revienta_si_faltan_las_credenciales_en_el_env(): void
+    public function test_it_blows_up_when_the_credentials_are_missing(): void
     {
-        config(['panel.usuario_inicial' => ['nombre' => 'Panel', 'email' => null, 'password' => null]]);
+        config(['panel.initial_user' => ['name' => 'Panel', 'email' => null, 'password' => null]]);
 
         // Mejor que falle a que invente una por defecto que acabe en producción.
         $this->expectException(RuntimeException::class);
-        $this->seed(UsuarioInicialSeeder::class);
+        $this->seed(InitialUserSeeder::class);
     }
 
     // --- Borrado pasivo -----------------------------------------------------
 
-    public function test_un_usuario_dado_de_baja_no_puede_entrar(): void
+    public function test_a_deleted_user_cannot_log_in(): void
     {
-        $this->configurar();
-        $this->seed(UsuarioInicialSeeder::class);
+        $this->configure();
+        $this->seed(InitialUserSeeder::class);
 
         User::first()->delete();
 
@@ -83,10 +83,10 @@ class UsuarioInicialTest extends TestCase
         $this->assertSame(1, User::withTrashed()->count());
     }
 
-    public function test_el_email_de_un_usuario_dado_de_baja_queda_libre(): void
+    public function test_the_email_of_a_deleted_user_is_freed(): void
     {
-        $this->configurar();
-        $this->seed(UsuarioInicialSeeder::class);
+        $this->configure();
+        $this->seed(InitialUserSeeder::class);
         User::first()->delete();
 
         // Con un índice único normal esto reventaría contra una fila invisible.
@@ -100,14 +100,14 @@ class UsuarioInicialTest extends TestCase
         $this->assertSame(2, User::withTrashed()->count());
     }
 
-    public function test_el_seeder_revive_la_cuenta_dada_de_baja(): void
+    public function test_the_seeder_revives_a_deleted_account(): void
     {
-        $this->configurar();
-        $this->seed(UsuarioInicialSeeder::class);
+        $this->configure();
+        $this->seed(InitialUserSeeder::class);
         $id = User::first()->id;
         User::first()->delete();
 
-        $this->seed(UsuarioInicialSeeder::class);
+        $this->seed(InitialUserSeeder::class);
 
         // La misma fila, no una nueva: se conserva a quién pertenecía.
         $this->assertSame(1, User::withTrashed()->count());

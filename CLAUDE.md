@@ -23,7 +23,14 @@ no hace falta abrir otro repositorio.
 
 ## Escribir código
 
-- Los comentarios y la documentación, en **castellano**, como el resto del repo.
+- **El código en inglés, el resto en castellano.** Clases, tablas, columnas, métodos y
+  variables van en inglés (`Merchant`, `routes.name`, `Route::rules()`). Los comentarios, los
+  mensajes de error de cara al usuario y la documentación, en castellano. Decidido el
+  12/08/2026; antes estaba todo en castellano.
+- **Una excepción que no se renombra**: las claves del JSON de `GET /api/rutas` (`nombre`,
+  `ruta`, `mensajero`, `codigo`) son el contrato con el bot — ver la regla 3 — y cambiarlas
+  obligaría a tocar `bot-gls` por un motivo puramente cosmético. Todo lo demás, incluida la
+  cabecera del CSV del seeder, va en inglés.
 - Blade y Tailwind a mano; nada de librerías de componentes.
 - Antes de dar algo por terminado, **verifícalo ejecutándolo** (`php artisan test`, una
   petición real al endpoint), no por inspección del código.

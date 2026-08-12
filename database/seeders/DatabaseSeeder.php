@@ -12,10 +12,10 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         // Credenciales desde el .env, nunca desde el repo (CONTEXTO.md §10).
-        $this->call(UsuarioInicialSeeder::class);
+        $this->call(InitialUserSeeder::class);
 
-        // Necesita database/seeders/data/comercios.csv, que no está en el repo
+        // Necesita database/seeders/data/merchants.csv, que no está en el repo
         // por confidencialidad (CONTEXTO.md §9). Sin él, revienta y lo explica.
-        $this->call(MaestroRutasSeeder::class);
+        $this->call(RouteMasterSeeder::class);
     }
 }

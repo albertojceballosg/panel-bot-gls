@@ -16,16 +16,16 @@ use RuntimeException;
  * Es idempotente: repetirlo actualiza la contraseña en lugar de fallar, que es
  * la forma cómoda de recuperar el acceso si se te olvida.
  */
-class UsuarioInicialSeeder extends Seeder
+class InitialUserSeeder extends Seeder
 {
     public function run(): void
     {
-        $datos = config('panel.usuario_inicial');
+        $data = config('panel.initial_user');
 
-        foreach (['email', 'password'] as $obligatorio) {
-            if (blank($datos[$obligatorio])) {
+        foreach (['email', 'password'] as $required) {
+            if (blank($data[$required])) {
                 throw new RuntimeException(
-                    'Falta SEED_USER_'.strtoupper($obligatorio).' en el .env. Las '.
+                    'Falta SEED_USER_'.strtoupper($required).' en el .env. Las '.
                     'credenciales del usuario inicial no se versionan: ver CONTEXTO.md §10 '.
                     'y el .env.example.'
                 );
@@ -34,15 +34,15 @@ class UsuarioInicialSeeder extends Seeder
 
         // withTrashed: si la cuenta estaba dada de baja, se revive en vez de
         // chocar contra el índice único parcial de `users` (§4).
-        $usuario = User::withTrashed()->firstOrNew(['email' => $datos['email']]);
+        $user = User::withTrashed()->firstOrNew(['email' => $data['email']]);
 
-        $usuario->name = $datos['nombre'];
-        $usuario->password = $datos['password'];   // el cast 'hashed' lo cifra
-        $usuario->deleted_at = null;
-        $usuario->save();
+        $user->name = $data['name'];
+        $user->password = $data['password'];   // el cast 'hashed' lo cifra
+        $user->deleted_at = null;
+        $user->save();
 
         // El email sí, la contraseña no: los logs y la salida de consola acaban
         // pegados en sitios que no controlamos.
-        $this->command?->info("  Usuario inicial listo: {$usuario->email}");
+        $this->command?->info("  Usuario inicial listo: {$user->email}");
     }
 }

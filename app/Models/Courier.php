@@ -8,17 +8,16 @@ use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Validation\Rule;
 
-class Mensajero extends Model
+/** El mensajero que conduce una ruta. */
+class Courier extends Model
 {
     use SoftDeletes;
 
-    protected $table = 'mensajeros';
+    protected $fillable = ['name', 'route_id'];
 
-    protected $fillable = ['nombre', 'ruta_id'];
-
-    public function ruta(): BelongsTo
+    public function route(): BelongsTo
     {
-        return $this->belongsTo(Ruta::class);
+        return $this->belongsTo(Route::class);
     }
 
     /**
@@ -26,15 +25,15 @@ class Mensajero extends Model
      * el mensajero no "tiene" comercios, conduce una ruta que los tiene. Así no
      * hay dos sitios donde pueda decir a qué ruta pertenece un comercio.
      */
-    public function comercios(): HasManyThrough
+    public function merchants(): HasManyThrough
     {
         return $this->hasManyThrough(
-            Comercio::class,
-            Ruta::class,
-            'id',        // rutas.id
-            'ruta_id',   // comercios.ruta_id
-            'ruta_id',   // mensajeros.ruta_id
-            'id',        // rutas.id
+            Merchant::class,
+            Route::class,
+            'id',        // routes.id
+            'route_id',  // merchants.route_id
+            'route_id',  // couriers.route_id
+            'id',        // routes.id
         );
     }
 
@@ -44,26 +43,26 @@ class Mensajero extends Model
      *
      * @param  int|null  $id  Id a ignorar al comprobar unicidad (edición).
      */
-    public static function reglas(?int $id = null): array
+    public static function rules(?int $id = null): array
     {
         return [
             // whereNull('deleted_at') para que la regla diga lo mismo que los
             // índices parciales: el nombre y la ruta de un mensajero dado de
             // baja quedan libres para su sustituto.
-            'nombre' => [
+            'name' => [
                 'required',
                 'string',
                 'max:255',
-                Rule::unique('mensajeros', 'nombre')->ignore($id)->whereNull('deleted_at'),
+                Rule::unique('couriers', 'name')->ignore($id)->whereNull('deleted_at'),
             ],
 
             // Única: una ruta la lleva un solo mensajero, o el `mensajero` del
             // contrato quedaría ambiguo. Nullable: puede no tener ruta asignada.
-            'ruta_id' => [
+            'route_id' => [
                 'nullable',
                 'integer',
-                Rule::exists('rutas', 'id')->whereNull('deleted_at'),
-                Rule::unique('mensajeros', 'ruta_id')->ignore($id)->whereNull('deleted_at'),
+                Rule::exists('routes', 'id')->whereNull('deleted_at'),
+                Rule::unique('couriers', 'route_id')->ignore($id)->whereNull('deleted_at'),
             ],
         ];
     }

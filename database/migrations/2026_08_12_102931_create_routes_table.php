@@ -17,13 +17,13 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('rutas', function (Blueprint $table) {
+        Schema::create('routes', function (Blueprint $table) {
             $table->id();
 
             // Nombre libre, renombrable desde el panel. Hoy el maestro las
             // llama "1".."6", pero eso son etiquetas, no identidad: la
             // identidad es el id.
-            $table->string('nombre');
+            $table->string('name');
 
             $table->softDeletes();
             $table->timestamps();
@@ -33,11 +33,11 @@ return new class extends Migration
         // las borradas, así que un nombre liberado al dar de baja una ruta no
         // se podría reutilizar nunca. Postgres lo resuelve con un índice
         // parcial; Laravel no lo expresa en el Blueprint, de ahí el SQL.
-        DB::statement('CREATE UNIQUE INDEX rutas_nombre_unique ON rutas (nombre) WHERE deleted_at IS NULL');
+        DB::statement('CREATE UNIQUE INDEX routes_name_unique ON routes (name) WHERE deleted_at IS NULL');
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('rutas');
+        Schema::dropIfExists('routes');
     }
 };

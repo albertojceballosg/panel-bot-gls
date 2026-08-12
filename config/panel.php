@@ -16,8 +16,8 @@ return [
     |
     */
 
-    'usuario_inicial' => [
-        'nombre' => env('SEED_USER_NAME', 'Panel'),
+    'initial_user' => [
+        'name' => env('SEED_USER_NAME', 'Panel'),
         'email' => env('SEED_USER_EMAIL'),
         'password' => env('SEED_USER_PASSWORD'),
     ],
