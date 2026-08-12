@@ -236,6 +236,55 @@ class PickupRoutesCrudTest extends TestCase
             ->assertViewHas('pickupRoutes', fn ($p) => $p->currentPage() === 1);
     }
 
+    // --- Confirmación de la baja ---------------------------------------------
+
+    public function test_the_trash_icon_only_opens_a_confirmation(): void
+    {
+        $pickupRoute = PickupRoute::create(['name' => '6']);
+
+        // Un icono es fácil de pulsar sin querer, y va pegado al de editar.
+        Livewire::test('pickup-routes')
+            ->call('confirmDelete', $pickupRoute->id)
+            ->assertSet('confirmingDeletion', $pickupRoute->id)
+            ->assertSee('Vas a dar de baja');
+
+        $this->assertNotSoftDeleted($pickupRoute);
+    }
+
+    public function test_the_confirmation_names_the_record(): void
+    {
+        $pickupRoute = PickupRoute::create(['name' => 'Vallecas']);
+
+        // «¿Dar de baja?» a secas no te dice si acertaste de fila.
+        Livewire::test('pickup-routes')
+            ->call('confirmDelete', $pickupRoute->id)
+            ->assertSee('Vallecas');
+    }
+
+    public function test_cancelling_the_confirmation_deletes_nothing(): void
+    {
+        $pickupRoute = PickupRoute::create(['name' => '6']);
+
+        Livewire::test('pickup-routes')
+            ->call('confirmDelete', $pickupRoute->id)
+            ->call('cancelDelete')
+            ->assertSet('confirmingDeletion', null);
+
+        $this->assertNotSoftDeleted($pickupRoute);
+    }
+
+    public function test_confirming_does_delete_and_closes_the_dialog(): void
+    {
+        $pickupRoute = PickupRoute::create(['name' => '6']);
+
+        Livewire::test('pickup-routes')
+            ->call('confirmDelete', $pickupRoute->id)
+            ->call('delete', $pickupRoute->id)
+            ->assertSet('confirmingDeletion', null);
+
+        $this->assertSoftDeleted($pickupRoute);
+    }
+
     // --- Idioma ---------------------------------------------------------------
 
     public function test_the_validation_messages_are_in_spanish(): void

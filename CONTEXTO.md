@@ -455,8 +455,8 @@ necesita pantallas donde enchufarse.
 | 0 | Layout, navegación y estilos | **Hecho** (12/08/2026) |
 | 1 | Login | **Hecho** (12/08/2026) |
 | 2 | CRUD de rutas | **Hecho** (12/08/2026) |
-| 3 | CRUD de mensajeros: nombre y ruta que conduce, que puede quedar sin asignar | — |
-| 4 | Comercios: listado con búsqueda y filtro por ruta, paginación, alta/edición de nombre, código y **ruta** (no mensajero: el comercio pertenece a la ruta, §4) | — |
+| 3 | CRUD de mensajeros: nombre y ruta que conduce, que puede quedar sin asignar | **Hecho** (12/08/2026) |
+| 4 | Comercios: listado con búsqueda y filtro por ruta, paginación, alta/edición de nombre, código y **ruta** (no mensajero: el comercio pertenece a la ruta, §4) | **Hecho** (12/08/2026) |
 | 5 | Pantalla del historial | — |
 
 Blade y Tailwind escritos a mano; nada de librerías de componentes.
@@ -542,6 +542,78 @@ mensajes en inglés y no había `lang/`, así que respondía «The name has alre
 Se vio en una captura, no en los 91 tests que pasaban. Está en un solo fichero para que el
 mensaje de una regla sea el mismo en todas las pantallas, con `attributes` para que diga
 «ruta» y no «pickup_route_id».
+
+#### Módulo 3 — CRUD de mensajeros. Hecho el 12/08/2026
+
+Mismo patrón que rutas. Lo propio de esta pantalla:
+
+- **El desplegable sólo ofrece rutas libres**, más la del mensajero que se está editando —si no,
+  abrir el formulario le borraría su propia ruta al guardar. `couriers.pickup_route_id` es único
+  entre los vivos (§4), así que ofrecer una ocupada sería ofrecer algo que la base va a rechazar.
+- **La validación lo corta igual**, aunque el desplegable no la ofrezca: el navegador no es una
+  frontera de confianza. Hay un test que manda una ruta ocupada a mano.
+- Dar de baja a un mensajero **no toca la ruta ni sus comercios**, y el sustituto puede heredar
+  su ruta en cuanto el saliente se retira. Es lo que motivó el rediseño del modelo, ahora
+  comprobado desde la pantalla.
+
+#### `CrudScreen`: lo común, extraído con dos ejemplos delante
+
+Se pospuso a propósito hasta tener dos CRUD escritos; con uno solo se habría adivinado mal qué
+sube y qué se queda. En el trait está lo mecánico —estado del formulario, paginación, baja y
+reactivación, cerrojo de doble envío y transacción— y en cada pantalla queda lo que de verdad
+cambia: las reglas de validación, los campos y la consulta del listado. Rutas se reescribió
+encima y sus 19 tests siguieron pasando sin tocarlos, que es la señal de que la abstracción no
+se inventó nada.
+
+Un detalle que sólo aparece al generalizar en castellano: **el género**. «Ruta dado de baja» no
+lo dice nadie, así que el trait pide un `feminine()` y compone el participio. Hay un test por
+cada género.
+
+#### Confirmación antes de dar de baja
+
+Añadida el 12/08/2026 a rutas y mensajeros. Vive en `CrudScreen` y en `ui/confirm-modal`, así
+que el módulo de comercios la hereda sin escribir nada: es el primer dividendo de haber
+extraído el trait.
+
+El icono de la papelera ya no borra — abre la confirmación. Un icono es fácil de pulsar sin
+querer, y va pegado al de editar. **El aviso nombra el registro** («Vas a dar de baja «1»»),
+porque un «¿Seguro?» a secas no te dice si acertaste de fila, y **explica la consecuencia real
+de cada módulo**: en rutas avisa de que primero hay que mover sus comercios; en mensajeros, de
+que la ruta y sus comercios no se tocan.
+
+#### Módulo 4 — CRUD de comercios. Hecho el 12/08/2026
+
+El más grande, y el que menos código propio tiene: `CrudScreen` le dio modal, iconos,
+confirmación, paginación, cerrojo y transacción sin escribir nada. Lo suyo:
+
+- **Dos controles, no uno**: caja de búsqueda por nombre **y por código** —es lo que el cliente
+  tiene delante cuando mira el portal— y un desplegable aparte para filtrar por ruta.
+- **El código es opcional** (11 de los 93 no lo tienen, §3). Un `<input>` vacío llega como `''`
+  y la regla es `nullable|integer`, así que se normaliza a `null` antes de validar; si no,
+  «sin código» se leería como un entero mal formado. En la tabla se muestra como «—» con la
+  explicación al pasar el ratón: sin código, el bot cruza por nombre y eso es *fuzzy*.
+- **El mensajero de la tabla es derivado**, no una columna: sale de `pickupRoute.courier` (§4),
+  con eager loading para no hacer dos consultas por fila.
+- Mover un comercio de ruta —lo que motivó todo el historial— queda registrado con autor.
+
+**`lang/es/pagination.php` y `lang/es.json`.** El paginador decía «Showing 1 to 10 of 93
+results». Son dos mecanismos distintos: las flechas piden `pagination.previous`, con espacio de
+nombres, y los textos sueltos van por claves de JSON. Otra vez lo encontró una captura, no los
+134 tests que pasaban.
+
+#### El paginador del panel
+
+Cambiado el 12/08/2026 en los tres listados a la vez, desde `CrudScreen`. Con 93 comercios el
+numerado sacaba diez botones que se comían el pie de la tabla entero, y en azul oscuro pesaba
+más que la propia tabla. Ahora es **anterior/siguiente** con un `2 / 10` en medio, en blanco y
+gris: es navegación secundaria y no debe competir con el contenido. El pie queda con el
+recuento a la izquierda («93 comercios») y los botones a la derecha.
+
+**Livewire ignora `Paginator::defaultView()`.** Su `WithPagination` resuelve la vista buscando
+un método `paginationView()` en el propio componente y, si no lo encuentra, se queda con
+`livewire::tailwind`. Registrarlo en el `AppServiceProvider` no hace nada — se probó, y la
+pantalla seguía saliendo numerada aunque `Paginator::$defaultView` fuese la correcta. El sitio
+bueno es `CrudScreen::paginationView()`.
 
 ### Fase 4 — Historial de cambios. Hecha el 12/08/2026
 

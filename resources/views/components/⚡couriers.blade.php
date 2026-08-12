@@ -1,15 +1,16 @@
 <?php
 
+use App\Models\Courier;
 use App\Models\PickupRoute;
 use App\Support\CrudScreen;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 
 /**
- * CRUD de rutas de recogida (CONTEXTO.md §7, fase 3, módulo 2).
+ * CRUD de mensajeros (CONTEXTO.md §7, fase 3, módulo 3).
  *
- * La ruta es la entidad duradera del maestro: los mensajeros rotan, la ruta y
- * sus comercios siguen (§4). Por eso el borrado va con red y se puede deshacer.
+ * El mensajero es quien conduce una ruta hoy, no parte de su definición (§4):
+ * puede quedarse sin ruta, y darlo de baja no toca ni la ruta ni sus comercios.
  */
 new #[Layout('components.layouts.app')] class extends Component
 {
@@ -19,59 +20,78 @@ new #[Layout('components.layouts.app')] class extends Component
 
     public string $name = '';
 
+    /** Cadena y no int: un `<select>` devuelve texto, y '' es "sin ruta". */
+    public string $pickup_route_id = '';
+
     protected function model(): string
     {
-        return PickupRoute::class;
+        return Courier::class;
     }
 
     protected function formFields(): array
     {
-        return ['name'];
+        return ['name', 'pickup_route_id'];
     }
 
     protected function fillForm($record): void
     {
         $this->name = $record->name;
+        $this->pickup_route_id = (string) ($record->pickup_route_id ?? '');
     }
 
     protected function label(): string
     {
-        return 'ruta';
-    }
-
-    protected function feminine(): bool
-    {
-        return true;
+        return 'mensajero';
     }
 
     public function with(): array
     {
         return [
-            'pickupRoutes' => PickupRoute::query()
+            'couriers' => Courier::query()
                 ->when($this->showingTrashed, fn ($q) => $q->withTrashed())
                 ->when($this->search !== '', fn ($q) => $q->where(fn ($q) => $q
                     ->where('name', 'ilike', $this->likeTerm())
-                    ->orWhereHas('courier', fn ($q) => $q->where('name', 'ilike', $this->likeTerm()))))
-                // Cuenta y mensajero de una tirada: sin esto son dos consultas
-                // por fila y la pantalla crece con el maestro.
-                ->withCount('merchants')
-                ->with('courier')
+                    ->orWhereHas('pickupRoute', fn ($q) => $q->where('name', 'ilike', $this->likeTerm()))))
+                ->with('pickupRoute')
                 ->orderBy('name')
                 ->paginate(self::POR_PAGINA),
+
+            'availableRoutes' => $this->availableRoutes(),
         ];
+    }
+
+    /**
+     * Sólo las rutas sin conductor, más la del mensajero que se está editando.
+     *
+     * `couriers.pickup_route_id` es único entre los vivos (§4), así que ofrecer
+     * las ocupadas sería ofrecer opciones que la base va a rechazar. La regla
+     * de validación lo corta igual; esto evita que llegues a intentarlo.
+     */
+    private function availableRoutes()
+    {
+        return PickupRoute::query()
+            ->where(fn ($q) => $q
+                ->whereDoesntHave('courier')
+                ->when($this->editing, fn ($q, $id) => $q
+                    ->orWhereHas('courier', fn ($q) => $q->whereKey($id))))
+            ->orderBy('name')
+            ->get();
     }
 
     public function save(): void
     {
-        // Validación en el servidor. Las reglas viven en el modelo para que no
-        // se reescriban aquí ni en el resto de pantallas (§7, fase 1).
-        $this->validate(PickupRoute::rules($this->editing));
+        // Validación en el servidor, con las reglas del modelo (§7, fase 1).
+        $this->validate(Courier::rules($this->editing));
 
         $editando = $this->editing !== null;
 
-        $hecho = $this->transactionally($this->lockKey('save'), fn () => PickupRoute::withTrashed()
-            ->findOr($this->editing ?? 0, fn () => new PickupRoute)
-            ->fill(['name' => $this->name])
+        $hecho = $this->transactionally($this->lockKey('save'), fn () => Courier::withTrashed()
+            ->findOr($this->editing ?? 0, fn () => new Courier)
+            ->fill([
+                'name' => $this->name,
+                // '' significa "sin ruta asignada", y en la base es NULL.
+                'pickup_route_id' => $this->pickup_route_id === '' ? null : (int) $this->pickup_route_id,
+            ])
             ->save());
 
         if (! $hecho) {
@@ -79,19 +99,19 @@ new #[Layout('components.layouts.app')] class extends Component
         }
 
         $this->cancel();
-        session()->flash('ok', $editando ? 'Ruta actualizada.' : 'Ruta creada.');
+        session()->flash('ok', $editando ? 'Mensajero actualizado.' : 'Mensajero creado.');
     }
 }; ?>
 
 <div>
-    <x-ui.page-header title="Rutas de recogida"
-                      description="Cada ruta agrupa los comercios por los que pasa una furgoneta. El bot las usa para detectar incidencias.">
+    <x-ui.page-header title="Mensajeros"
+                      description="Quién conduce cada ruta hoy. Dar de baja a un mensajero no toca la ruta ni sus comercios.">
         <x-slot:actions>
             <x-ui.button wire:click="create">
                 <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                 </svg>
-                Nueva ruta
+                Nuevo mensajero
             </x-ui.button>
         </x-slot:actions>
     </x-ui.page-header>
@@ -113,71 +133,67 @@ new #[Layout('components.layouts.app')] class extends Component
                           d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z" />
                 </svg>
                 <x-ui.input wire:model.live.debounce.300ms="search" class="pl-9"
-                            placeholder="Buscar por ruta o mensajero…" aria-label="Buscar" />
+                            placeholder="Buscar por mensajero o ruta…" aria-label="Buscar" />
             </div>
 
             <label class="flex items-center gap-2 text-sm whitespace-nowrap text-slate-600">
                 <input type="checkbox" wire:model.live="showingTrashed"
                        class="size-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500">
-                Ver dadas de baja
+                Ver dados de baja
             </label>
         </div>
 
-        @if ($pickupRoutes->isEmpty())
-            <x-ui.empty-state :title="$search !== '' ? 'Ninguna ruta coincide' : 'Todavía no hay rutas'"
+        @if ($couriers->isEmpty())
+            <x-ui.empty-state :title="$search !== '' ? 'Ningún mensajero coincide' : 'Todavía no hay mensajeros'"
                               :description="$search !== ''
-                                  ? 'Prueba con otro nombre de ruta o de mensajero.'
-                                  : 'Crea la primera para poder asignarle mensajero y comercios.'">
+                                  ? 'Prueba con otro nombre de mensajero o de ruta.'
+                                  : 'Da de alta al primero y asígnale una ruta.'">
                 <x-slot:actions>
                     @if ($search !== '')
                         <x-ui.button variant="secondary" wire:click="$set('search', '')">Quitar el filtro</x-ui.button>
                     @else
-                        <x-ui.button wire:click="create">Nueva ruta</x-ui.button>
+                        <x-ui.button wire:click="create">Nuevo mensajero</x-ui.button>
                     @endif
                 </x-slot:actions>
             </x-ui.empty-state>
         @else
-            {{-- En móvil la tabla no cabe: que desborde ella y no la página. --}}
             <div class="overflow-x-auto">
                 <table class="w-full min-w-2xl text-sm">
                     <thead>
                         <tr class="border-b border-slate-200 text-left text-xs tracking-wider text-slate-500 uppercase">
-                            <th class="px-6 py-3 font-semibold">Ruta</th>
                             <th class="px-6 py-3 font-semibold">Mensajero</th>
-                            <th class="px-6 py-3 text-right font-semibold">Comercios</th>
+                            <th class="px-6 py-3 font-semibold">Ruta que conduce</th>
                             <th class="px-6 py-3"><span class="sr-only">Acciones</span></th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
-                        @foreach ($pickupRoutes as $pickupRoute)
-                            <tr wire:key="ruta-{{ $pickupRoute->id }}" class="hover:bg-slate-50/75">
+                        @foreach ($couriers as $courier)
+                            <tr wire:key="mensajero-{{ $courier->id }}" class="hover:bg-slate-50/75">
                                 <td class="px-6 py-3">
-                                    <span class="font-medium text-shell-900">{{ $pickupRoute->name }}</span>
+                                    <span class="font-medium text-shell-900">{{ $courier->name }}</span>
 
-                                    @if ($pickupRoute->trashed())
+                                    @if ($courier->trashed())
                                         <span class="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                                            dada de baja
+                                            dado de baja
                                         </span>
                                     @endif
                                 </td>
 
                                 <td class="px-6 py-3">
-                                    @if ($pickupRoute->courier)
-                                        <span class="text-slate-700">{{ $pickupRoute->courier->name }}</span>
+                                    @if ($courier->pickupRoute)
+                                        <span class="rounded-md bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">
+                                            {{ $courier->pickupRoute->name }}
+                                        </span>
                                     @else
-                                        <span class="text-slate-400">sin asignar</span>
+                                        <span class="text-slate-400">sin ruta asignada</span>
                                     @endif
-                                </td>
-
-                                <td class="px-6 py-3 text-right tabular-nums text-slate-700">
-                                    {{ $pickupRoute->merchants_count }}
                                 </td>
 
                                 <td class="px-6 py-3">
                                     <div class="flex justify-end gap-1">
-                                        @if ($pickupRoute->trashed())
+                                        @if ($courier->trashed())
                                             <x-ui.icon-button label="Reactivar"
-                                                              wire:click="restore({{ $pickupRoute->id }})"
+                                                              wire:click="restore({{ $courier->id }})"
                                                               wire:loading.attr="disabled">
                                                 <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
                                                     <path stroke-linecap="round" stroke-linejoin="round"
@@ -186,7 +202,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                             </x-ui.icon-button>
                                         @else
                                             <x-ui.icon-button label="Editar"
-                                                              wire:click="edit({{ $pickupRoute->id }})"
+                                                              wire:click="edit({{ $courier->id }})"
                                                               wire:loading.attr="disabled">
                                                 <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
                                                     <path stroke-linecap="round" stroke-linejoin="round"
@@ -195,7 +211,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                             </x-ui.icon-button>
 
                                             <x-ui.icon-button label="Dar de baja" variant="danger"
-                                                              wire:click="confirmDelete({{ $pickupRoute->id }})"
+                                                              wire:click="confirmDelete({{ $courier->id }})"
                                                               wire:loading.attr="disabled">
                                                 <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
                                                     <path stroke-linecap="round" stroke-linejoin="round"
@@ -213,22 +229,40 @@ new #[Layout('components.layouts.app')] class extends Component
 
             <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-6 py-3">
                 <p class="text-sm text-slate-500">
-                    {{ $pickupRoutes->total() }} {{ $pickupRoutes->total() === 1 ? 'ruta' : 'rutas' }}
+                    {{ $couriers->total() }} {{ $couriers->total() === 1 ? 'mensajero' : 'mensajeros' }}
                 </p>
 
-                {{ $pickupRoutes->links() }}
+                {{ $couriers->links() }}
             </div>
         @endif
     </x-ui.card>
 
     @if ($showingForm)
-        <x-ui.modal :title="$editing ? 'Editar ruta' : 'Nueva ruta'"
-                    description="El nombre es libre y se puede cambiar cuando quieras.">
-            <form wire:submit="save" id="form-ruta">
-                <x-ui.field label="Nombre de la ruta" for="name" :error="$errors->first('name')"
-                            hint="Hoy se llaman «1» a «6», pero es texto libre.">
+        <x-ui.modal :title="$editing ? 'Editar mensajero' : 'Nuevo mensajero'"
+                    description="Puede quedarse sin ruta: la ruta existe aunque nadie la conduzca.">
+            <form wire:submit="save" id="form-mensajero" class="space-y-4">
+                <x-ui.field label="Nombre" for="name" :error="$errors->first('name')">
                     <x-ui.input wire:model="name" id="name" :invalid="$errors->has('name')" autofocus />
                 </x-ui.field>
+
+                <x-ui.field label="Ruta que conduce" for="pickup_route_id"
+                            :error="$errors->first('pickup_route_id')"
+                            hint="Sólo aparecen las rutas sin conductor: una ruta la lleva un solo mensajero.">
+                    <x-ui.select wire:model="pickup_route_id" id="pickup_route_id"
+                                 :invalid="$errors->has('pickup_route_id')">
+                        <option value="">Sin ruta asignada</option>
+
+                        @foreach ($availableRoutes as $pickupRoute)
+                            <option value="{{ $pickupRoute->id }}">{{ $pickupRoute->name }}</option>
+                        @endforeach
+                    </x-ui.select>
+                </x-ui.field>
+
+                @if ($availableRoutes->isEmpty())
+                    <p class="text-xs text-slate-500">
+                        Todas las rutas tienen ya un mensajero. Libera una quitándosela a quien la lleve.
+                    </p>
+                @endif
             </form>
 
             <x-slot:footer>
@@ -236,10 +270,7 @@ new #[Layout('components.layouts.app')] class extends Component
                     Cancelar
                 </x-ui.button>
 
-                {{-- La mitad de cliente del doble envío: se desactiva mientras
-                     `save` está en vuelo. La otra mitad es el cerrojo del
-                     servidor, que es el que de verdad lo impide. --}}
-                <x-ui.button type="submit" form="form-ruta"
+                <x-ui.button type="submit" form="form-mensajero"
                              wire:loading.attr="disabled" wire:target="save">
                     <span wire:loading.remove wire:target="save">{{ $editing ? 'Guardar' : 'Crear' }}</span>
                     <span wire:loading wire:target="save">Guardando…</span>
@@ -249,10 +280,10 @@ new #[Layout('components.layouts.app')] class extends Component
     @endif
 
     @if ($confirmingDeletion && $objetivo = $this->deletionTarget())
-        <x-ui.confirm-modal title="Dar de baja la ruta" :name="$objetivo->name"
+        <x-ui.confirm-modal title="Dar de baja al mensajero" :name="$objetivo->name"
                             confirm="delete({{ $confirmingDeletion }})">
-            Dejará de aparecer en el listado y de servirse al bot. Podrás reactivarla cuando
-            quieras{{ $objetivo->merchants()->count() > 0 ? ', pero primero hay que mover sus comercios a otra ruta' : '' }}.
+            Su ruta queda libre para otro mensajero, y ni la ruta ni sus comercios se tocan.
+            Podrás reactivarlo cuando quieras.
         </x-ui.confirm-modal>
     @endif
 </div>
