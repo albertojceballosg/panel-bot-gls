@@ -280,6 +280,11 @@ renombrar desde el panel sin tocar nada más.
 | Entorno | Docker (todo: PHP, Node, Postgres). El host solo necesita Docker. |
 | Framework | **Laravel 13.25.0** sobre **PHP 8.4** |
 | UI | **Livewire 4.4.0** + **Tailwind 4** vía **Vite 8**, Blade escrito a mano |
+
+> **Livewire 4 usa componentes de fichero único**: la clase PHP y el Blade van juntos en
+> `resources/views/components/⚡nombre.blade.php`, y el ⚡ se ignora al resolver el nombre
+> (`⚡login.blade.php` → `login`). No hay `app/Livewire/`. Se enrutan con
+> `Route::livewire($uri, $componente)`. Es lo que genera `artisan livewire:make`.
 | BD | **Postgres 17** |
 | Auth del panel | Login propio, ~1 componente Livewire |
 | Auth de la API | Bearer estático contra `config('panel.bot_token')` |
@@ -356,9 +361,23 @@ Verificado, no solo ejecutado: `app` responde 200 con `<title>Panel Bot GLS</tit
 *healthy* con las 3 migraciones del esqueleto aplicadas, `APP_KEY` generada y los ficheros
 con el dueño correcto (no root).
 
-No hizo falta configurar `server.hmr.host`: el esqueleto de Laravel 13 ya trae Tailwind 4
-cableado (`@tailwindcss/vite` + `@import 'tailwindcss'`) y, con el 5173 publicado, el
-navegador llega a Vite por `localhost` sin más.
+El esqueleto de Laravel 13 ya trae Tailwind 4 cableado (`@tailwindcss/vite` +
+`@import 'tailwindcss'`), así que no hubo que tocarlo.
+
+> **Corregido el 12/08/2026.** Aquí ponía que no hacía falta configurar `server.hmr.host`
+> porque «con el 5173 publicado el navegador llega a Vite por localhost sin más». **Era
+> falso**, y se vio en cuanto hubo una pantalla de verdad que abrir: el contenedor arranca
+> con `--host 0.0.0.0`, el plugin de Laravel escribe eso mismo en `public/hot`, y Chrome
+> rechaza `0.0.0.0` con `ERR_ADDRESS_INVALID`. La página cargaba sin CSS y sin hot reload.
+>
+> La verificación de la fase 0 tenía un hueco: se comprobó con `curl` que Vite servía el CSS
+> **pidiéndoselo a `localhost:5173` directamente**, que funciona, pero no se miró qué
+> dirección se le estaba diciendo al navegador que pidiese. Comprobar el servidor no es lo
+> mismo que comprobar al cliente.
+>
+> Arreglado en `vite.config.js` con `hmr.host: 'localhost'` —lo que el navegador debe pedir,
+> distinto de lo que escucha el contenedor— más `strictPort: true`, para que un 5173 ocupado
+> falle en vez de saltar al 5174 y dejar la página muda.
 
 ### Fase 1 — Hecha el 12/08/2026
 
@@ -427,18 +446,45 @@ Verificado con peticiones reales, no sólo con tests: `401` sin token y con toke
 
 ### Fase 3 — CRUD
 
-- Listado de comercios con búsqueda por nombre y filtro por ruta (componente Livewire).
-- Alta/edición de comercio: nombre, código, **ruta** (no mensajero: el comercio pertenece a
-  la ruta, §4).
-- CRUD de rutas: nombre, renombrable.
-- CRUD de mensajeros: nombre y ruta que conduce, que puede quedar sin asignar.
-- Login propio (~1 componente Livewire + `Auth::attempt`), sin registro público. El usuario
-  ya existe: lo siembra `InitialUserSeeder` desde el `.env` (§10). Falta sólo la pantalla.
-- Blade y Tailwind escritos a mano; nada de librerías de componentes.
-- **La pantalla del historial** (fase 4, ya construido por debajo): un parcial reutilizable
-  que reciba `$model->auditLogs()` y pinte la línea de tiempo con "Campo / Antes / Después".
-  Necesita un mapa de etiquetas por entidad (`pickup_route_id` → «Ruta») para no enseñar IDs
-  crudos; con una sola FK que resolver, es un array pequeño, no un sistema.
+Partida en módulos, y se entregan de uno en uno. El orden no es arbitrario: **rutas va antes
+que mensajeros y comercios** porque los dos la referencian, y el historial va al final porque
+necesita pantallas donde enchufarse.
+
+| # | Módulo | Estado |
+|---|---|---|
+| 0 | Layout, navegación y estilos | **Hecho** (12/08/2026) |
+| 1 | Login | **Hecho** (12/08/2026) |
+| 2 | CRUD de rutas | — |
+| 3 | CRUD de mensajeros: nombre y ruta que conduce, que puede quedar sin asignar | — |
+| 4 | Comercios: listado con búsqueda y filtro por ruta, paginación, alta/edición de nombre, código y **ruta** (no mensajero: el comercio pertenece a la ruta, §4) | — |
+| 5 | Pantalla del historial | — |
+
+Blade y Tailwind escritos a mano; nada de librerías de componentes.
+
+**El módulo 5** es la cara visible de la fase 4, que ya está construida por debajo: un parcial
+reutilizable que reciba `$model->auditLogs()` y pinte la línea de tiempo con "Campo / Antes /
+Después". Necesita un mapa de etiquetas por entidad (`pickup_route_id` → «Ruta») para no
+enseñar IDs crudos; con una sola FK que resolver, es un array pequeño, no un sistema.
+
+#### Módulos 0 y 1 — Hechos el 12/08/2026
+
+- `components/layouts/app.blade.php` (con sesión) y `guest.blade.php` (sin ella).
+- `⚡login.blade.php`: `Auth::attempt`, "mantener la sesión abierta", y **limitación de cinco
+  intentos por minuto y correo**, sin la cual el formulario es una puerta abierta a probar
+  contraseñas a ritmo de máquina. La clave del contador lleva también la IP para que nadie
+  pueda bloquear la cuenta de otro.
+- **Un solo mensaje de error** para "ese correo no existe" y "contraseña incorrecta":
+  distinguirlos confirma qué correos tienen cuenta a quien pruebe uno por uno.
+- `session()->regenerate()` al entrar y `invalidate()` al salir, contra la fijación de sesión.
+  Salir es `POST`: con `GET` lo dispara cualquier enlace de fuera, o lo precarga el navegador.
+- Portada escueta con los totales del maestro. §5 descarta el dashboard con gráficas.
+- Se borraron dos restos del esqueleto que ya mentían: `welcome.blade.php`, al que no llegaba
+  nadie, y el `ExampleTest` que afirmaba que `/` devuelve 200 cuando ahora exige sesión.
+
+Verificado con una sesión HTTP real, no sólo con tests: `GET /` sin sesión redirige a
+`/login`, el POST al endpoint de Livewire entra y redirige, y `GET /` ya autenticado pinta
+93 comercios, 6 rutas y 6 mensajeros. La build de producción de Tailwind genera las clases de
+los ficheros nuevos, emoji en el nombre incluido.
 
 ### Fase 4 — Historial de cambios. Hecha el 12/08/2026
 
