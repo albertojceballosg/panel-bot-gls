@@ -318,4 +318,5 @@ new #[Layout('components.layouts.app')] class extends Component
             reactives.
         </x-ui.confirm-modal>
     @endif
+
 </div>

@@ -346,8 +346,8 @@ docker compose logs -f vite
 | 0 | Docker, scaffold de Laravel, Livewire, Tailwind | **Hecha** (12/08/2026) |
 | 1 | Migraciones, modelos y seeder | **Hecha** (12/08/2026) |
 | 2 | `GET /api/rutas` + token + test de contrato | **Código hecho** (12/08/2026), falta cerrar §3 con el bot |
-| 3 | CRUD Livewire de comercios y mensajeros | — |
-| 4 | Historial de cambios | **Hecha** (12/08/2026), falta la pantalla (fase 3) |
+| 3 | CRUD Livewire de comercios y mensajeros | **Hecha** (12/08/2026) |
+| 4 | Historial de cambios | **Hecha** (12/08/2026), pantalla incluida |
 | 5 | Imagen de producción y despliegue | — |
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -457,7 +457,8 @@ necesita pantallas donde enchufarse.
 | 2 | CRUD de rutas | **Hecho** (12/08/2026) |
 | 3 | CRUD de mensajeros: nombre y ruta que conduce, que puede quedar sin asignar | **Hecho** (12/08/2026) |
 | 4 | Comercios: listado con búsqueda y filtro por ruta, paginación, alta/edición de nombre, código y **ruta** (no mensajero: el comercio pertenece a la ruta, §4) | **Hecho** (12/08/2026) |
-| 5 | Pantalla del historial | — |
+| 5 | ~~Historial en la ficha de cada registro~~ | **Retirado**: lo cubre el módulo 6 |
+| 6 | Listado de auditoría | **Hecho** (12/08/2026) |
 
 Blade y Tailwind escritos a mano; nada de librerías de componentes.
 
@@ -614,6 +615,56 @@ un método `paginationView()` en el propio componente y, si no lo encuentra, se 
 `livewire::tailwind`. Registrarlo en el `AppServiceProvider` no hace nada — se probó, y la
 pantalla seguía saliendo numerada aunque `Paginator::$defaultView` fuese la correcta. El sitio
 bueno es `CrudScreen::paginationView()`.
+
+#### Módulo 5 — Pantalla del historial. Hecho el 12/08/2026. **Cierra la fase 3**
+
+Un icono de reloj por fila abre un modal con la línea de tiempo del registro. Vive en
+`CrudScreen` y en `ui/audit-trail`, así que las tres pantallas lo tienen con una línea cada una.
+
+- **`CrudScreen::auditEntries()` prepara, el Blade sólo pinta.** Ahí se resuelven las etiquetas
+  («Ruta», no `pickup_route_id`) y los valores (el nombre de la ruta, no su id), y se cargan
+  las rutas **de una sola consulta** en vez de una por fila.
+- El mapa de rutas va con `withTrashed`: el historial de algo movido a una ruta que luego se
+  dio de baja tiene que seguir leyéndose. Lo mismo `historyRecord()`, o dar de baja un registro
+  escondería justo el rastro de por qué se dio de baja.
+- **`id` se deja fuera** del diff: en un alta viene el volcado entero y ese dato no le dice
+  nada a nadie.
+- Un registro sin historial lo dice, en vez de enseñar un hueco: lo que cargó el seeder no
+  aparece porque no es el cambio de nadie.
+
+Verificado en el navegador con el escenario literal de §8: mover COBO FAMILY de la ruta 3 a la
+5 desde el panel y leer «Modificación · Panel · 12/08/2026 23:35 · Ruta: 3 → 5».
+
+#### Módulo 6 — Listado de auditoría. Hecho el 12/08/2026
+
+Añadido a petición, y **corrigiendo un descarte mío**: había dicho que §5 lo excluía, pero §5
+excluye «dashboard con gráficas», que no es lo mismo que un listado de auditoría. Lo apliqué
+de más.
+
+La razón de que haga falta: el modal de la ficha responde «¿qué le pasó a *este* comercio?»,
+pero sólo sirve si ya sospechas de él. La pregunta real de §0 es al revés y cronológica — «el
+informe de ayer cambió, ¿qué tocó alguien?» — y eso sólo lo responde un listado entre módulos.
+
+Columnas: cuándo, quién, módulo, registro, acción, y un botón al detalle con «Campo / Antes /
+Después». Filtros por módulo y búsqueda por autor o por nombre del registro —que vive **dentro
+del JSON** del volcado, así que se busca con `after->>'name'`—. Sólo lectura: `audit_logs` no
+se modifica ni se borra nunca (§4).
+
+**`AuditPresenter` salió de `CrudScreen` al construirlo.** La traducción de etiquetas y valores
+estaba en el trait de los CRUD, fuera del alcance del listado; tenerla en una clase propia
+evita duplicarla y le da una responsabilidad sola. Los 10 tests del historial de ficha pasaron
+sin tocarse tras el cambio.
+
+**El nombre del registro se lee del propio volcado antes que de la relación.** Así la fila
+sigue siendo legible aunque el registro se haya borrado del todo — la misma razón por la que
+`user_email` está desnormalizado.
+
+**El historial por ficha se retiró** el mismo día, al entrar este listado: tener dos sitios
+para ver lo mismo es duplicación, y el modal de la ficha sólo servía si ya sospechabas del
+registro. Con él se fueron el icono del reloj de las tres tablas, el parcial `ui/audit-trail`
+—que quedaba sin usar— y su fichero de tests, previa mudanza a `AuditLogsScreenTest` de las
+tres comprobaciones que el listado no cubría: que `id` no entra al diff, que un nulo se pinta
+«—» y que las cuatro acciones tienen nombre en castellano.
 
 ### Fase 4 — Historial de cambios. Hecha el 12/08/2026
 

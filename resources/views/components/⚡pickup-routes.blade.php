@@ -255,4 +255,5 @@ new #[Layout('components.layouts.app')] class extends Component
             quieras{{ $objetivo->merchants()->count() > 0 ? ', pero primero hay que mover sus comercios a otra ruta' : '' }}.
         </x-ui.confirm-modal>
     @endif
+
 </div>

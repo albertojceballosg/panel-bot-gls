@@ -286,4 +286,5 @@ new #[Layout('components.layouts.app')] class extends Component
             Podrás reactivarlo cuando quieras.
         </x-ui.confirm-modal>
     @endif
+
 </div>
