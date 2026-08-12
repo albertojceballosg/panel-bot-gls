@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\Comercio;
 use App\Models\Mensajero;
+use App\Models\Ruta;
 use Illuminate\Database\Seeder;
 use RuntimeException;
 
@@ -36,13 +37,14 @@ class MaestroRutasSeeder extends Seeder
             throw new RuntimeException('El CSV no tiene ni una fila de datos.');
         }
 
-        $mensajeros = $this->sembrarMensajeros($filas);
-        $this->sembrarComercios($filas, $mensajeros);
+        $rutas = $this->sembrarRutas($filas);
+        $this->sembrarMensajeros($filas, $rutas);
+        $this->sembrarComercios($filas, $rutas);
 
         $this->command?->info(sprintf(
             '  Maestro cargado: %d comercios en %d rutas.',
             count($filas),
-            count($mensajeros),
+            count($rutas),
         ));
     }
 
@@ -78,11 +80,21 @@ class MaestroRutasSeeder extends Seeder
                 throw new RuntimeException("Fila {$n}: falta el nombre del comercio o el del mensajero.");
             }
 
+            // La ruta del CSV ("1".."6") pasa a ser el NOMBRE de la ruta, no un
+            // número: son etiquetas renombrables desde el panel (§4).
+            $ruta = trim($rutaTexto);
+
+            if ($ruta === '') {
+                throw new RuntimeException(
+                    "Fila {$n}: el comercio \"{$nombre}\" no trae ruta, y sin ruta no se ".
+                    'puede agrupar. Ver CONTEXTO.md §4.'
+                );
+            }
+
             $filas[] = [
                 'nombre' => $nombre,
                 'mensajero' => $mensajero,
-                // El contrato admite mensajero sin número de ruta asignado.
-                'ruta' => $rutaTexto === '' ? null : (int) $rutaTexto,
+                'ruta' => $ruta,
             ];
         }
 
@@ -92,56 +104,101 @@ class MaestroRutasSeeder extends Seeder
     }
 
     /**
-     * @param  list<array{nombre: string, mensajero: string, ruta: ?int}>  $filas
-     * @return array<string, Mensajero> Indexado por nombre de mensajero.
+     * @param  list<array{nombre: string, mensajero: string, ruta: string}>  $filas
+     * @return array<string, Ruta> Indexado por nombre de ruta.
      */
-    private function sembrarMensajeros(array $filas): array
+    private function sembrarRutas(array $filas): array
     {
-        // Un mensajero, una ruta (§4). Si el origen trae dos rutas para el mismo
-        // mensajero hay que parar: es justo el error que el modelo de datos
-        // existe para impedir, y que el bot no sabría detectar.
-        $rutasPorMensajero = [];
-        foreach ($filas as $fila) {
-            $rutasPorMensajero[$fila['mensajero']][] = $fila['ruta'];
+        $rutas = [];
+
+        foreach (array_unique(array_column($filas, 'ruta')) as $nombre) {
+            $rutas[$nombre] = $this->revivir(Ruta::withTrashed()->firstOrNew(['nombre' => $nombre]));
         }
 
-        $mensajeros = [];
-
-        foreach ($rutasPorMensajero as $nombre => $rutas) {
-            $distintas = array_unique($rutas, SORT_REGULAR);
-
-            if (count($distintas) > 1) {
-                throw new RuntimeException(sprintf(
-                    'El mensajero "%s" aparece con %d rutas distintas (%s). '.
-                    'Un mensajero hace una sola ruta: ver CONTEXTO.md §4.',
-                    $nombre,
-                    count($distintas),
-                    implode(', ', array_map(fn ($r) => $r ?? 'null', $distintas)),
-                ));
-            }
-
-            $mensajeros[$nombre] = Mensajero::updateOrCreate(
-                ['nombre' => $nombre],
-                ['ruta' => reset($rutas)],
-            );
-        }
-
-        return $mensajeros;
+        return $rutas;
     }
 
     /**
-     * @param  list<array{nombre: string, mensajero: string, ruta: ?int}>  $filas
-     * @param  array<string, Mensajero>  $mensajeros
+     * @param  list<array{nombre: string, mensajero: string, ruta: string}>  $filas
+     * @param  array<string, Ruta>  $rutas
      */
-    private function sembrarComercios(array $filas, array $mensajeros): void
+    private function sembrarMensajeros(array $filas, array $rutas): void
+    {
+        // Un mensajero, una ruta, y una ruta un mensajero (§4). Si el origen no
+        // lo cumple hay que parar: el contrato sirve un único `mensajero` por
+        // comercio, así que cualquiera de los dos choques lo dejaría ambiguo.
+        $rutasPorMensajero = [];
+        foreach ($filas as $fila) {
+            $rutasPorMensajero[$fila['mensajero']][$fila['ruta']] = true;
+        }
+
+        $asignadas = [];
+
+        foreach ($rutasPorMensajero as $nombre => $suyas) {
+            if (count($suyas) > 1) {
+                throw new RuntimeException(sprintf(
+                    'El mensajero "%s" aparece en %d rutas distintas (%s). Un mensajero '.
+                    'conduce una sola ruta: ver CONTEXTO.md §4.',
+                    $nombre,
+                    count($suyas),
+                    implode(', ', array_keys($suyas)),
+                ));
+            }
+
+            $ruta = array_key_first($suyas);
+
+            if (isset($asignadas[$ruta])) {
+                throw new RuntimeException(sprintf(
+                    'La ruta "%s" tiene dos mensajeros ("%s" y "%s"). El contrato sirve '.
+                    'uno solo por comercio: ver CONTEXTO.md §3.',
+                    $ruta,
+                    $asignadas[$ruta],
+                    $nombre,
+                ));
+            }
+
+            $asignadas[$ruta] = $nombre;
+
+            $mensajero = Mensajero::withTrashed()->firstOrNew(['nombre' => $nombre]);
+            $mensajero->ruta_id = $rutas[$ruta]->id;
+            $this->revivir($mensajero);
+        }
+    }
+
+    /**
+     * @param  list<array{nombre: string, mensajero: string, ruta: string}>  $filas
+     * @param  array<string, Ruta>  $rutas
+     */
+    private function sembrarComercios(array $filas, array $rutas): void
     {
         foreach ($filas as $fila) {
             // Deliberadamente no se toca `codigo`: el maestro de origen no lo
             // trae, así que nace nulo, pero si alguien ya lo rellenó a mano (o
             // lo hizo el backfill del §8) volver a sembrar no debe borrárselo.
-            $comercio = Comercio::firstOrNew(['nombre' => $fila['nombre']]);
-            $comercio->mensajero_id = $mensajeros[$fila['mensajero']]->id;
-            $comercio->save();
+            $comercio = Comercio::withTrashed()->firstOrNew(['nombre' => $fila['nombre']]);
+            $comercio->ruta_id = $rutas[$fila['ruta']]->id;
+            $this->revivir($comercio);
         }
+    }
+
+    /**
+     * Guarda, y si el registro estaba dado de baja lo devuelve a la vida.
+     *
+     * El seeder carga la lista completa del maestro (§3, regla 1): si algo
+     * vuelve a aparecer en el origen, es que está vigente. Sin esto chocaría
+     * contra el índice único parcial en vez de resucitar, y el error sería
+     * incomprensible — la fila que estorba no se ve por ningún lado.
+     *
+     * @template T of \Illuminate\Database\Eloquent\Model
+     *
+     * @param  T  $modelo
+     * @return T
+     */
+    private function revivir($modelo)
+    {
+        $modelo->deleted_at = null;
+        $modelo->save();
+
+        return $modelo;
     }
 }

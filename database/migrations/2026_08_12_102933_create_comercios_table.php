@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -25,22 +26,36 @@ return new class extends Migration
             // esa lógica aquí sería tenerla en dos repos y que se separen.
             $table->string('nombre_normalizado')
                 ->storedAs("upper(regexp_replace(trim(nombre), '\\s+', ' ', 'g'))");
-            $table->unique('nombre_normalizado');
 
             // El SourceDepartment del portal. Opcional: 11 de los 93 comercios
-            // no lo tienen (§3). En Postgres un índice único deja pasar varios
-            // NULL, que es justo lo que pide "único cuando no es nulo".
-            $table->integer('codigo')->nullable()->unique();
+            // no lo tienen (§3).
+            $table->integer('codigo')->nullable();
 
-            // restrictOnDelete y no cascade: borrar un mensajero no puede
-            // llevarse por delante sus comercios en silencio. El maestro que
-            // sirve el endpoint es el producto (§2).
-            $table->foreignId('mensajero_id')
-                ->constrained('mensajeros')
+            // El comercio pertenece a la RUTA, no al mensajero. Es lo que hace
+            // que cambiar de mensajero no toque el maestro: la ruta y sus
+            // comercios sobreviven a la persona que la conducía (§4).
+            //
+            // Obligatoria: un comercio sin ruta no se puede agrupar, y el bot
+            // rechaza los que vienen sin ella (§3).
+            //
+            // restrictOnDelete: con borrado pasivo esta FK sólo se dispara ante
+            // un forceDelete. El caso normal lo corta el modelo, que se niega a
+            // borrar una ruta que todavía tiene comercios vivos.
+            $table->foreignId('ruta_id')
+                ->constrained('rutas')
                 ->restrictOnDelete();
 
+            $table->softDeletes();
             $table->timestamps();
         });
+
+        // Únicos sólo entre los vivos: dar de baja un comercio tiene que
+        // liberar su nombre y su código para poder volver a darlo de alta.
+        DB::statement('CREATE UNIQUE INDEX comercios_nombre_normalizado_unique ON comercios (nombre_normalizado) WHERE deleted_at IS NULL');
+
+        // En Postgres un índice único ya deja pasar varios NULL, que es lo que
+        // pide "único cuando no es nulo"; el WHERE sólo añade lo de los vivos.
+        DB::statement('CREATE UNIQUE INDEX comercios_codigo_unique ON comercios (codigo) WHERE deleted_at IS NULL');
     }
 
     public function down(): void

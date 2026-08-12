@@ -2,29 +2,48 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
     /**
-     * La ruta cuelga del mensajero, no del comercio (CONTEXTO.md §4): los seis
-     * mensajeros del maestro tienen exactamente una ruta cada uno. Si `ruta`
-     * fuese columna de `comercios`, dos comercios del mismo mensajero podrían
-     * acabar en rutas distintas — un error que el bot no puede detectar y que
-     * le haría producir un informe equivocado sin avisar.
+     * El mensajero es quien conduce una ruta hoy, no parte de su definición
+     * (CONTEXTO.md §4). De ahí que la FK viva aquí y no al revés: el mensajero
+     * se puede quedar sin ruta, o desaparecer, y la ruta sigue existiendo con
+     * todos sus comercios.
      */
     public function up(): void
     {
         Schema::create('mensajeros', function (Blueprint $table) {
             $table->id();
-            $table->string('nombre')->unique();
+            $table->string('nombre');
 
-            // Nullable porque el contrato (§3) admite `ruta: null` para un
-            // mensajero al que todavía no le han asignado número.
-            $table->integer('ruta')->nullable();
+            // Nullable: un mensajero recién dado de alta puede no tener ruta
+            // asignada todavía.
+            //
+            // nullOnDelete: borrar la ruta a lo bruto no debe borrar a la
+            // persona. Con borrado pasivo esto casi nunca llega a dispararse,
+            // pero cubre el forceDelete.
+            $table->foreignId('ruta_id')
+                ->nullable()
+                ->constrained('rutas')
+                ->nullOnDelete();
 
+            $table->softDeletes();
             $table->timestamps();
         });
+
+        // Ambos únicos sólo entre los vivos: si contasen a los dados de baja,
+        // el sustituto de un mensajero no podría heredar ni su nombre ni su
+        // ruta, que es exactamente el caso de uso que motivó tener `rutas`.
+        DB::statement('CREATE UNIQUE INDEX mensajeros_nombre_unique ON mensajeros (nombre) WHERE deleted_at IS NULL');
+
+        // Una ruta la lleva un solo mensajero: el contrato sirve un único
+        // `mensajero` por comercio (§3), así que dos la dejarían ambigua. El
+        // índice parcial además ignora los NULL, de modo que puede haber
+        // varios mensajeros sin ruta asignada.
+        DB::statement('CREATE UNIQUE INDEX mensajeros_ruta_id_unique ON mensajeros (ruta_id) WHERE deleted_at IS NULL');
     }
 
     public function down(): void
