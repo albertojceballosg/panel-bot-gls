@@ -40,12 +40,22 @@ class RouteMasterController
             'generado' => now()->toIso8601String(),
 
             'comercios' => $merchants->map(fn (Merchant $merchant) => [
+                // Identidad estable, y por eso va primero. El bot la guarda con
+                // el maestro y la devuelve al subir las incidencias (§3.1), de
+                // modo que cada incidencia enlaza con la entidad real en vez de
+                // casar cadenas de texto. Sin esto, renombrar una ruta —que el
+                // panel permite— descoloca todas las incidencias ya guardadas.
+                'id' => $merchant->id,
+
                 // Sin normalizar: lo normaliza el bot.
                 'nombre' => $merchant->name,
 
+                'ruta_id' => $merchant->pickupRoute->id,
+
                 // OJO: texto, no número. Las rutas son entidades con nombre
-                // libre desde el rediseño del 12/08/2026 (§4). Es un cambio de
-                // contrato todavía sin cerrar con bot-gls: ver el aviso de §3.
+                // libre desde el rediseño del 12/08/2026 (§4). Sigue siendo lo
+                // que el bot usa para agrupar y para los informes; el `ruta_id`
+                // es para el camino de vuelta.
                 'ruta' => $merchant->pickupRoute->name,
 
                 // Null si la ruta no tiene mensajero asignado ahora mismo.

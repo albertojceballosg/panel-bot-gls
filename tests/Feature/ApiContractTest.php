@@ -82,15 +82,17 @@ class ApiContractTest extends TestCase
 
     public function test_the_json_shape_is_the_one_in_the_contract(): void
     {
-        $this->merchant('3COR CREATIONS SLU', '1', 'Benjamin GLS', code: 287);
+        $merchant = $this->merchant('3COR CREATIONS SLU', '1', 'Benjamin GLS', code: 287);
 
         $this->ask()
             ->assertOk()
             ->assertJsonStructure([
                 'generado',
-                'comercios' => [['nombre', 'ruta', 'mensajero', 'codigo']],
+                'comercios' => [['id', 'nombre', 'ruta_id', 'ruta', 'mensajero', 'codigo']],
             ])
+            ->assertJsonPath('comercios.0.id', $merchant->id)
             ->assertJsonPath('comercios.0.nombre', '3COR CREATIONS SLU')
+            ->assertJsonPath('comercios.0.ruta_id', $merchant->pickup_route_id)
             ->assertJsonPath('comercios.0.ruta', '1')
             ->assertJsonPath('comercios.0.mensajero', 'Benjamin GLS')
             ->assertJsonPath('comercios.0.codigo', 287);
@@ -103,9 +105,46 @@ class ApiContractTest extends TestCase
         $this->merchant('3COR CREATIONS SLU', '1', 'Benjamin GLS');
 
         $this->assertSame(
-            ['nombre', 'ruta', 'mensajero', 'codigo'],
+            ['id', 'nombre', 'ruta_id', 'ruta', 'mensajero', 'codigo'],
             array_keys($this->ask()->json('comercios.0')),
         );
+    }
+
+    public function test_the_ids_are_integers_and_identify_the_entities(): void
+    {
+        // El `id` es identidad, no adorno: el bot lo devuelve en cada incidencia
+        // para que sobreviva a que alguien renombre la ruta o el comercio.
+        $uno = $this->merchant('Comercio uno', 'Vallecas', 'Pepe Rodriguez');
+        $dos = $this->merchant('Comercio dos', 'Vallecas', null);
+
+        $merchants = collect($this->ask()->json('comercios'))->keyBy('nombre');
+
+        $this->assertIsInt($merchants['Comercio uno']['id']);
+        $this->assertIsInt($merchants['Comercio uno']['ruta_id']);
+        $this->assertNotSame($merchants['Comercio uno']['id'], $merchants['Comercio dos']['id']);
+
+        // Dos comercios de la misma ruta comparten `ruta_id`. Es lo que permite
+        // al panel agrupar incidencias por ruta sin comparar nombres.
+        $this->assertSame(
+            $merchants['Comercio uno']['ruta_id'],
+            $merchants['Comercio dos']['ruta_id'],
+        );
+        $this->assertSame($uno->pickup_route_id, $dos->pickup_route_id);
+    }
+
+    public function test_renaming_a_route_does_not_change_its_id(): void
+    {
+        // El motivo de existir del `ruta_id`: el nombre es una etiqueta que el
+        // cliente cambia desde el panel, la identidad no se mueve.
+        $this->merchant('3COR CREATIONS SLU', '1', 'Benjamin GLS');
+        $antes = $this->ask()->json('comercios.0');
+
+        PickupRoute::where('name', '1')->firstOrFail()->update(['name' => 'Centro']);
+        $despues = $this->ask()->json('comercios.0');
+
+        $this->assertSame($antes['ruta_id'], $despues['ruta_id']);
+        $this->assertSame('1', $antes['ruta']);
+        $this->assertSame('Centro', $despues['ruta']);
     }
 
     public function test_the_code_is_an_integer_or_null(): void

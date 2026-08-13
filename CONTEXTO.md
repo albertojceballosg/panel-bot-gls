@@ -47,11 +47,17 @@ pase a ser exacto cuando el comercio tenga código (ver `codigo` en §3).
 ## 2. Cómo encaja con el bot
 
 ```
-  ┌──────────────────┐        GET /api/rutas          ┌──────────────────┐
-  │  panel-bot-gls   │ ◀───── (1 vez al día, al  ───── │     bot-gls      │
+  ┌──────────────────┐        GET /api/rutas           ┌──────────────────┐
+  │  panel-bot-gls   │ ◀───── (1 vez al día, al  ────  │     bot-gls      │
   │  Laravel + PG    │        arrancar la corrida)     │  Python + cron   │
-  └──────────────────┘                                 └──────────────────┘
+  │                  │                                 │                  │
+  │                  │ ◀───── POST /api/incidencias ─  │                  │
+  └──────────────────┘        (al terminarla — §3.1)   └──────────────────┘
 ```
+
+**En las dos direcciones el bot es el cliente**, y no es casualidad: el panel es el que tiene
+dirección estable y el bot el que corre a ratos bajo cron. Al arrancar la corrida tira del
+maestro; al terminarla empuja el resultado.
 
 **El bot tira, el panel no empuja.** Decidido así porque el bot corre en WSL2 con cron, sin
 dirección estable: un `POST` del panel hacia el bot exigiría un proceso escuchando siempre,
@@ -93,9 +99,10 @@ Sobre `codigo`: es 1:1 con el comercio (comprobado sobre el 03/08 — 0 comercio
 códigos, 0 códigos con dos comercios). **Si viene, el cruce del bot pasa a ser exacto y
 desaparece el *fuzzy*.** 11 de los 93 comercios del maestro actual no lo tienen.
 
-### ⚠️ Cambio de contrato sin cerrar: `ruta` pasa de número a texto
+### ⚠️ Cambio de contrato: `ruta` pasa de número a texto
 
-**Decidido el 12/08/2026 en este repo. Todavía NO acordado con el repo del bot.**
+**Decidido el 12/08/2026 en este repo. Acordado con el repo del bot el 13/08/2026** (queda
+anotado en su `CONTEXT.md` §11.4), a la espera de que el bot lo implemente.
 
 Las rutas dejaron de ser un número estático para ser entidades con nombre libre, renombrables
 desde el panel (§4). `1`…`6` pasan a ser etiquetas, no identidad. En consecuencia el endpoint
@@ -114,7 +121,29 @@ Lo que hay que comprobar en `bot-gls` antes de dar la fase 2 por cerrada:
 - Que la validación de entrada del bot (regla 2, más abajo) acepte `mensajero: null`, que
   ahora puede pasar cuando una ruta se queda sin conductor.
 
-Mientras no se cierre, el `rutas.xlsx` sigue siendo el recambio y el bot no se rompe.
+Mientras no se implemente, el `rutas.xlsx` sigue siendo el recambio y el bot no se rompe.
+
+### Segundo cambio: el endpoint añade el `id` de cada ruta y cada comercio
+
+**Acordado el 13/08/2026 entre ambos repos. Pendiente de implementar en este.**
+
+```json
+{ "id": 42, "nombre": "3COR CREATIONS SLU", "ruta": "1", "ruta_id": 3,
+  "mensajero": "Benjamin GLS", "codigo": 287 }
+```
+
+Nace de §3.1: sin identificador, una incidencia sólo puede señalar una ruta por su etiqueta,
+y como las rutas son renombrables (el cambio de arriba), renombrar una descoloca todas las
+incidencias ya guardadas. El bot conserva los ids junto al maestro y los devuelve al subir
+las incidencias, de modo que cada una enlaza con su entidad real en vez de casar cadenas de
+texto — que es justo el problema que ya sufre el cruce por nombre contra el portal.
+
+**El `nombre` sigue siendo obligatorio y no cambia de papel**: el portal sólo da nombres, así
+que el cruce del bot se sigue haciendo por ahí. El `id` es para el camino de vuelta.
+
+Los ids son los de `pickup_routes.id` y `merchants.id` (§4). Al ser identidad, **no se
+reciclan**: si un comercio se da de baja y vuelve, es el mismo id o es otro comercio, nunca
+un id reutilizado por un tercero.
 
 ### Reglas acordadas que este repo debe respetar
 
@@ -128,6 +157,127 @@ Mientras no se cierre, el `rutas.xlsx` sigue siendo el recambio y el bot no se r
    es peor — de ahí las validaciones de §4.
 3. **El `rutas.xlsx` sigue siendo el recambio en el bot**: si hay JSON usa el JSON, si no,
    el Excel. La migración no rompe nada.
+
+## 3.1 El contrato de subida: incidencias
+
+> ⚠️ **En fase de ajuste: este contrato puede cambiar.** Se documenta el 13/08/2026 para
+> poder construir los dos lados contra la misma forma, no porque esté cerrado. De ahí el
+> `version` en la raíz del payload: cuando cambie, se sube el número.
+
+`POST /api/incidencias`, mismo `VerifyBotToken` que el maestro, una vez al día al terminar la
+corrida.
+
+**Estado (13/08/2026): implementado y guardando.** `IncidentIntakeController` valida, guarda
+en `incident_runs` + `run_packages` y responde `200` con el balance
+(`recibidas`/`nuevas`/`actualizadas`/`retiradas`). Probado de punta a punta con el 03/08 real
+del bot: 168 incidencias, 8 alertas, los 168 `merchant_id` resueltos. `401` sin token y `422`
+con el detalle de qué campo falla.
+
+**Qué manda el bot y qué no.** En esta primera versión, **sólo las incidencias** más el
+resumen que las enmarca. Se da por hecho que crecerá. Una "incidencia" aquí es una cosa muy
+concreta: *un paquete pasó por la cinta en la tanda de otra ruta* — o sea, lo recogió quien no
+le tocaba. No es el desvío horario contra la mediana, que el bot calcula aparte y manda como
+campo de apoyo.
+
+```json
+{
+  "version": 1,
+  "corrida": {
+    "fecha": "2026-08-10",
+    "generado": "2026-08-11T09:14:03+02:00",
+    "fiable": true,
+    "maestro": "2026-08-11T07:00:00+02:00",
+    "tolerancia_min": 20,
+    "umbral_tanda_min": 5,
+    "envios": 646, "evaluados": 520, "incidencias": 66,
+    "sin_hora_cinta": 59, "sin_ruta": 67
+  },
+  "incidencias": [
+    {
+      "expedicion": "1334043165",
+      "codigo": "61326305203862",
+      "comercio": { "id": null, "nombre": "COBO FAMILY, S.L." },
+      "ruta_asignada":  { "id": null, "nombre": "Ruta 3", "mensajero": "Freddy GLS" },
+      "ruta_observada": { "id": null, "nombre": "Ruta 1" },
+      "tipo": "tanda_de_otra_ruta",
+      "hora_cinta": "2026-08-03T19:52:52+00:00",
+      "desvio_min": 22.3,
+      "rutas_compatibles": [],
+      "confianza": "baja",
+      "motivo_confianza": ["ruta_dispersa"]
+    }
+  ],
+  "alertas": [
+    { "tipo": "ruta_dispersa", "texto": "…", "rutas": [ { "id": null, "nombre": "Ruta 6" } ] }
+  ]
+}
+```
+
+| Campo | Regla |
+|---|---|
+| `version` | Entero. Sube cuando cambie la forma del payload. |
+| `corrida.fecha` | El día analizado, `aaaa-mm-dd`. Es media clave natural. |
+| `corrida.fiable` | Si `false`, esa corrida no pudo consultar bastantes envíos. **Hay que enseñarlo en la interfaz**, ver abajo. |
+| `corrida.maestro` | El `generado` del maestro que sirvió este endpoint y con el que se evaluó. Permite saber si una incidencia discutida salió de un maestro viejo. |
+| `expedicion` | El identificador del envío en GLS. La otra media clave natural. |
+| `codigo` | El código de barras. Informativo, para buscar el paquete en el portal. |
+| `ruta_asignada` | La ruta que el maestro **de este panel** dice que le toca a ese comercio. |
+| `tipo` | `tanda_de_otra_ruta` (pasó en la tanda principal de otra ruta: hay a quién señalar) \| `fuera_de_tanda` (no pasó con el grueso de su ruta, pero esa tanda no era de nadie en particular). |
+| `ruta_observada` | La ruta en cuya tanda pasó el paquete. Es la acusación, y **es `null` cuando `tipo` es `fuera_de_tanda`** — 56 de las 168 del 03/08. Son dos hallazgos distintos: uno señala a alguien y el otro no. No mezclarlos en la misma lista. |
+| `mensajero` | **Foto del día, no relación.** Texto, dentro de la ruta, a propósito: si el panel reasigna el conductor después, la incidencia debe seguir diciendo quién conducía aquel día. No enlazar contra `couriers` para pintarlo. |
+| `rutas_compatibles` | Otras rutas que compartían esa tanda. Vacío si la tanda era de una sola. |
+| `confianza` | `alta` \| `baja`. |
+| `motivo_confianza` | Lista, posiblemente con los dos: `ruta_dispersa` \| `tanda_compartida`. Vacía si `confianza` es `alta`. |
+| `id` | Desde el 13/08/2026 **llega poblado**: es el `merchants.id` o el `pickup_routes.id` de este panel. Sigue siendo opcional en el contrato —un maestro sin identificadores lo manda nulo— así que la persistencia debe saber casar por `nombre` cuando falte. |
+
+### `confianza` es obligación de la interfaz, no un campo más
+
+**Medido sobre el envío de prueba del 03/08/2026: de 168 incidencias, 160 llegan con
+`confianza: baja`** — 133 por ruta dispersa, 10 por tanda compartida, 17 por ambas. Sólo 8 se
+sostienen sin reservas. Una pantalla que las liste todas igual presentaría 160 sospechas que
+el bot marca como no concluyentes con la misma autoridad que las 8 que sí lo son.
+
+Es la parte que evita que esta herramienta señale a una persona sin fundamento. El bot ya
+distingue dos situaciones en las que no puede afirmar quién recogió qué: cuando una ruta pasó
+dispersa por la cinta, y cuando dos furgonetas descargaron seguidas y sus paquetes son
+indistinguibles por hora. **El listado en texto que el cliente lee hoy lo anota explícitamente**
+("(!) ruta dispersa: poco fiable", "(!) esa tanda la compartían varias rutas").
+
+Si el panel pinta *"Vallecas — 48 paquetes de otra ruta"* sin ese matiz, convierte una
+sospecha declarada en un hecho firme contra un mensajero. Un panel que pierde el matiz es
+peor que no tener panel. Lo mismo con `corrida.fiable`: una corrida dudosa no cubre todos los
+envíos del día y no se puede leer como si fuera completa.
+
+### Reglas que este repo debe respetar
+
+1. **El bot manda la jornada completa**, nunca incidencias sueltas — la regla 1 de §3 en el
+   otro sentido. Una corrida se puede repetir a mano, y el reenvío debe dejar el mismo estado
+   sin duplicar nada.
+2. ***Upsert* por `(fecha, expedicion)`.** Las incidencias que dejen de venir en un reenvío de
+   esa fecha se marcan retiradas, **no se borran** — coherente con los borrados pasivos de §4.
+   Así el contrato aguanta igual si más adelante el panel guarda estado de gestión (revisada,
+   comentada, asignada) que si no: esa decisión está abierta y no hace falta cerrarla ahora.
+3. **No llegan datos personales y no hay que pedirlos.** El bot recorta por lista blanca: los
+   CSV de su lado llevan nombre, dirección, teléfono y email del destinatario, y nada de eso
+   hace falta para gestionar una incidencia de ruta. No ampliar el contrato con esos campos
+   sin una razón de negocio y una política de retención (§10).
+4. **El endpoint no depende de la interfaz**, igual que `GET /api/rutas` (regla 3 de
+   `CLAUDE.md`). Y el 4xx tiene que ser honesto: el bot no reintenta un 422, así que un
+   payload rechazado por contrato debe decir qué campo falla.
+5. **`VerifyBotToken` sirve tal cual**, pero su `reject()` registra literalmente
+   `"GET /api/rutas rechazado"`. En cuanto proteja también el `POST`, ese mensaje miente:
+   hacerlo genérico al implementar esto.
+
+### Lo que falta en este repo
+
+1. **La persistencia**: tabla, *upsert* por `(fecha, expedicion)` y el marcado de retiradas.
+   Decidir el esquema con el JSON de prueba delante, que está en `salidas/panel_20260803.json`
+   del repo del bot.
+2. **La pantalla**, con la obligación de `confianza` de más arriba.
+3. **Un test de contrato** como el de `GET /api/rutas`, fijando el `422` y el `202`.
+
+Nada de esto llega a producción hasta que el bot alcance al panel por red, que es el pendiente
+de §8 sobre dónde se despliega cada uno. En desarrollo el bot apunta a `http://localhost:8000`.
 
 ## 4. Modelo de datos
 
@@ -503,6 +653,37 @@ por su peso, y copiar el aire no instala nada. El acento y los grises de la carc
 Tailwind pantalla a pantalla. Los enlaces de la barra lateral se declaran en un array del
 layout: **añadir un módulo es una línea**, no tocar el marcado.
 
+> **Ampliado el 13/08/2026 con «Operaciones».** La barra pasa a tener dos listas porque son
+> dos cosas distintas: `$modulos` es el maestro que el cliente mantiene —siempre a la vista,
+> es el trabajo del día— y `$grupos` son bloques plegables para lo que se consulta a ratos,
+> hoy sólo Incidencias. Sigue siendo una línea por pantalla.
+>
+> `ui/nav-group` recibe las rutas de sus hijos y **nace abierto si estás dentro de una de
+> ellas**. No es un detalle: `wire:navigate` reconstruye la página entera y el estado de
+> Alpine no sobrevive al salto, así que sin eso el grupo se cerraría justo al llegar a la
+> pantalla que acabas de abrir desde él.
+>
+> De paso, **`x-cloak` se usaba en el layout desde el módulo 0 sin estar definido en CSS**, así
+> que no hacía nada: el velo oscuro de la barra en móvil se pintaba un instante en cada carga
+> antes de esconderse. La regla está ahora en `app.css`.
+
+> **Corregido el 13/08/2026: el arreglo de móvil del módulo 2 estaba a medias.** Aquí ponía
+> que la tabla que se salía de la pantalla quedó resuelta con `overflow-x-auto`. Resuelve la
+> mitad —la tabla scrollea dentro de su caja— pero **la página entera seguía arrastrándose**:
+> medido a 390 px, `/merchants` se movía 356 px en horizontal dejando media pantalla en
+> blanco, y lo mismo `/pickup-routes` y `/audit-logs`. Se vio al medirlo, no al mirarlo: la
+> captura de móvil sale idéntica hasta que arrastras.
+>
+> El navegador propaga el ancho de la tabla al documento aunque su envoltorio scrollee. Lo
+> corta `contain: paint`, en `app.css` sobre `.overflow-x-auto` para que valga en las cuatro
+> pantallas y lo herede la siguiente. **No sirvieron** `overflow-x: hidden` en `main`, en
+> `body` ni en la raíz, ni `max-width: 100%` ni `min-width: 0` en el envoltorio; están
+> probados uno a uno.
+>
+> Y la cabecera superior pasa a nombrar la sección en la que estás. Decía «Maestro de rutas de
+> recogida» en todas las pantallas, que dejó de ser verdad al entrar Operaciones. Sale de las
+> mismas listas del layout, así que una pantalla nueva no tiene que registrarse en dos sitios.
+
 **No se extrajo todavía la abstracción común de los CRUD.** Con un solo ejemplo escrito se
 adivinaría mal; sale cuando el de mensajeros enseñe qué se repite de verdad.
 
@@ -692,12 +873,334 @@ la hora. 16 tests cubren el resto, incluido que la contraseña nunca llega al hi
 con `opcache` y los assets ya compilados), decidir dónde se despliega y cómo lo alcanza el
 bot.
 
+### Fase 6 — Cerrar el circuito con el bot (plan acordado el 13/08/2026)
+
+Va después de la 5 por número, no por orden: **producción es lo último**. Esta fase es la que
+convierte las dos mitades sueltas —el maestro que se sirve y las incidencias que se reciben—
+en un ciclo diario que funciona solo.
+
+#### El reparto de trabajo, y una alternativa que se descartó
+
+El bot analiza, este panel administra el maestro, guarda el resultado y se lo enseña al
+cliente. El 13/08/2026 **se planteó y se descartó** que fuera este repo quien calculase las
+incidencias, dejando al bot como mero recolector de datos de GLS.
+
+Lo que lo empujaba era bueno: el maestro vivía en un `rutas.xlsx` que alguien tenía que
+entregar a mano, y el cliente sólo tiene acceso al panel. Pero **ese problema lo resuelve la
+descarga del maestro** (§3), sin mover el análisis. Lo que frenó la mudanza es el coste de
+portar la lógica del bot a PHP: no implementa una regla dictada, sino lo que midieron tres
+días reales —el umbral de 5 minutos para partir tandas de la cinta, el 0,80 de concentración,
+y la regla de sólo acusar a otra ruta si esa tanda es de verdad suya, que evita 56
+acusaciones falsas al día—. El riesgo no es que una versión en PHP no funcione: es que
+funcione *parecido* y nadie lo note, porque el resultado son acusaciones contra mensajeros
+reales.
+
+Si algún día se retoma, hay dos ventajas que siguen en pie: recalcular una jornada tras
+corregir el maestro sin volver a consultar GLS (hoy obliga a repetir 14 minutos de corrida),
+y que los envíos de comercios desconocidos —490 de 983 el 03/08— aparezcan donde el cliente
+puede darlos de alta. La forma de hacerlo sin salto de fe sería que el bot mandase también
+las observaciones crudas, que este panel calculase en paralelo, y apagar el cálculo en Python
+sólo cuando ambos coincidieran sobre los mismos días.
+
+#### Lo que hace el bot (contexto, no es trabajo de este repo)
+
+| | Qué hace |
+|---|---|
+| **bot A** | ✅ **Hecha el 13/08/2026.** Lee el maestro de un `rutas.json` en su propio disco en vez del Excel, con el cambio de `ruta` a texto y admitiendo `mensajero: null`. Verificado convirtiendo el Excel al formato exacto de `GET /api/rutas`: mismo cruce, mismos grupos y listado byte a byte idéntico por las dos vías. |
+| **bot B** | ✅ **Hecha el 13/08/2026.** Descarga el maestro de `GET /api/rutas` al arrancar cada corrida. **El Excel ya no se usa**, queda de recambio. Si el panel no responde, sigue con la última copia buena que tiene en disco. Probado contra este panel: 93 comercios, y el listado del 03/08 sale idéntico. |
+| **bot C** | ✅ **Hecha el 13/08/2026.** Guarda los `id` del maestro y los devuelve en cada incidencia. Verificado con el 03/08: las 168 llegan con `id` de comercio y de ruta asignada, y las 112 que acusan a otra ruta traen también el suyo. |
+| **bot D** | Engancha el envío en su corrida diaria, con código de salida propio si el panel no acepta y un reenviador de lo que quedó pendiente. |
+
+El `rutas.json` del bot **no es un fichero compartido**: es su copia local, en su disco, que
+él mismo escribe con lo que descargó. No hay ningún fichero, disco ni base de datos en común
+entre los dos proyectos — las dos direcciones son HTTP, y por eso pueden vivir en servidores
+distintos.
+
+#### Lo que hay que hacer en este repo
+
+**A — Añadir los `id` a `GET /api/rutas`.** ✅ **Hecha el 13/08/2026.** El endpoint sirve
+`id` (comercio) y `ruta_id`, en ese orden de claves: `id, nombre, ruta_id, ruta, mensajero,
+codigo`. El test de contrato los fija, incluido que **renombrar una ruta no cambia su
+`ruta_id`**, que es el motivo entero de que existan. Comprobado de punta a punta: el bot los
+recibe, los arrastra por el cruce y los devuelve en cada incidencia.
+
+**B — Guardar las incidencias.** ✅ **Hecha el 13/08/2026.** Dos tablas: `incident_runs` (la
+jornada y su marco: `reliable`, contadores y alertas) y `run_packages` (una fila por paquete evaluado; con `type` no nulo es incidencia).
+*Upsert* por `(jornada, expedicion)` dentro de una transacción, y las que dejan de venir se
+marcan retiradas en vez de borrarse.
+
+*Verificado con el 03/08 real del bot*, enviándolo cuatro veces seguidas:
+
+| Envío | Resultado |
+|---|---|
+| 1º, las 168 | `nuevas: 168` |
+| 2º, idéntico | `nuevas: 0, actualizadas: 168` — no duplica |
+| 3º, recortado a 100 | `actualizadas: 100, retiradas: 68` |
+| 4º, las 168 otra vez | `retiradas: 0` — las 68 vuelven a estar vigentes |
+
+Tres decisiones que la fase C hereda y no debe deshacer:
+
+- **Los nombres son la foto del día.** `merchant_name`, `assigned_route_name` y
+  `assigned_courier_name` se copian aunque haya FK. Para *enseñar* una incidencia hay que
+  usarlos a ellos, no `$incident->merchant->name`: si mañana renombran la ruta o reasignan al
+  conductor, la incidencia debe seguir diciendo lo que pasó aquel día. Las FK sirven para
+  agrupar y enlazar. Hay un test que lo fija.
+- **Los ids que ya no existen no rompen la ingesta.** Si alguien forzó el borrado de un
+  comercio entre que el bot descargó el maestro y subió las incidencias, la fila entra con
+  `merchant_id` nulo y su nombre copiado. Insertar una FK muerta daría un 500, y el bot
+  reintenta los 5xx: se quedaría reintentando para siempre.
+- **Ni `RunPackage` ni `IncidentRun` son `Auditable`.** El historial de §4 registra lo que hacen
+  las personas; esto lo escribe el bot cada mañana y llenaría la auditoría de ruido.
+
+**C — La pantalla del cliente.** ✅ **Hecha el 13/08/2026.** Listado con filtro por fechas y
+detalle por jornada agrupado por ruta. Ver «La pantalla de incidencias», abajo.
+
+**D — Backfill del `codigo`.** Rellenar el `SourceDepartment` de cada comercio para que el
+cruce del bot sea exacto y desaparezca el *fuzzy*. Va al final porque es mejora, no requisito.
+
+#### La pantalla de incidencias (fase 6.C) — especificación
+
+> ✅ **Hecha el 13/08/2026.** Dos pantallas, y las cinco obligaciones de abajo cubiertas con
+> un test cada una. 31 tests entre `IncidentsScreenTest` e `IncidentRunScreenTest`.
+>
+> - **`/incidents`** — el listado: **tabla paginada** de 15 en 15, una fila por jornada, con
+>   **buscador por fechas** (`desde` / `hasta`, en la URL) y el recuento en el pie, como los
+>   tres CRUD. Columnas: jornada, evaluados, incidencias y firmes.
+>
+>   **Firmes va en columna propia y destacada**, separada del total: poner sólo «168» anuncia
+>   un incendio que el propio bot no sostiene — ese día sólo sostiene 8. Y **«evaluados» se
+>   pinta como `459 / 983` con una barra**, no como una cifra suelta: es el denominador
+>   honesto, y sin él «168 incidencias» se lee como si el día estuviera revisado entero.
+>
+>   Empezó siendo una lista de tarjetas y pasó a tabla el 13/08/2026 a petición. En el camino
+>   se quedaron por el suelo dos cosas que sólo se ven mirándolo: la fecha larga («lun. 3 de
+>   agosto de 2026») se partía en tres líneas y descuadraba la fila —de ahí el
+>   `lun. 03/08/2026`—, y con siete columnas la tabla no cabía en una pantalla normal, así que
+>   «envíos» y «evaluados» se fundieron en una, que además dice lo mismo mejor.
+> - **`/incidents/{fecha}`** — el detalle, con la forma del informe que el cliente ya lee:
+>   jornada → ruta → paquete, agrupado por la ruta **dueña** del paquete. Secciones de ruta
+>   plegables (Alpine, sin ida al servidor: las incidencias vienen todas en una consulta) y
+>   diálogo por paquete con lo que hace falta para contrastarlo en GLS Atlas.
+>
+> **Las horas se pintan en UTC, no en `Europe/Madrid`.** El informe del bot y GLS Atlas las
+> dan así, y convertirlas correría cada fila dos horas: el cliente vería 21:15 donde el portal
+> dice 19:15 y no podría contrastar ni un paquete. Hay un test que lo fija.
+>
+> **Las alertas pierden el `2026-08-03 ·` que el bot les antepone**: su informe cubre varios
+> días y esta página ya se titula con la fecha.
+>
+> **Un desplegable explica la columna «Fiabilidad»**, añadido el 13/08/2026 a petición. Sin
+> él, la diferencia entre «Firme» y «No concluyente» queda a interpretación de quien lea la
+> pantalla, y de esa interpretación sale una conversación con un mensajero. Dice qué es una
+> tanda, qué es la tanda principal, y las dos situaciones que tumban un hallazgo. **Los
+> umbrales los saca de la propia corrida** (`batch_gap_minutes`, `tolerance_minutes`), no
+> escritos a mano: si el bot cambia los suyos, el texto cambia con ellos. Hay un test que lo
+> fija cambiándolos a 9 y 35.
+>
+> ⚠️ **La única cifra escrita a mano es el 80 % de concentración** que decide si una ruta pasó
+> dispersa. Vive en `CONCENTRACION_MINIMA` de `src/incidencias.py` en el bot y **no viaja en
+> el payload**, así que si allí se cambia, este texto miente sin que salte nada. Candidata a
+> subir con el próximo cambio de contrato, junto con lo de aquí abajo.
+>
+> **Retirada la sección «Lo que el bot sostiene»** el 13/08/2026, también a petición: agrupaba
+> por comercio los hallazgos firmes del día. La cifra sigue en el balance y como distintivo de
+> cada ruta.
+>
+> Lo que **no** se hizo: un selector de jornada dentro del detalle, porque el listado con
+> filtro ya es ese selector.
+
+##### La jornada completa, no sólo las incidencias
+
+Pedido el 13/08/2026: ver dentro de cada ruta **los paquetes que no son incidencia**, como
+hace el informe en texto del bot («Ruta 1 — 94 paquetes, 11 con incidencia»). Sin ellos no hay
+proporción: once sobre 94 no es lo mismo que once sobre doce.
+
+**El panel ya está hecho; falta que el bot los mande.**
+
+**Una sola tabla, `run_packages`, una fila por paquete evaluado.** La tabla nació como
+`incidents` esa misma mañana y se reescribió en su sitio el mismo día —no hay nada desplegado,
+igual que en la fase 1—. Una segunda tabla para los paquetes correctos habría dejado el mismo
+envío en dos sitios, que es como empiezan a discrepar. El grano natural del dato es el
+paquete; **«incidencia» es un filtro sobre él** (`type` no nulo), y de ahí salen
+`scopeIncidents()` y `IncidentRun::currentIncidents()`.
+
+**El contrato de §3.1 crece con una lista opcional `paquetes`**, todos los evaluados del día,
+con incidencia o sin ella:
+
+```json
+{ "expedicion": "1334043165", "codigo": "61326305203862",
+  "comercio": { "id": 42, "nombre": "BOHOCHIQUE" },
+  "ruta_asignada": { "id": 3, "nombre": "Ruta 1", "mensajero": "Benjamin GLS" },
+  "hora_cinta": "2026-08-03T19:55:02+00:00" }
+```
+
+Los campos de incidencia (`tipo`, `ruta_observada`, `desvio_min`, `rutas_compatibles`,
+`confianza`, `motivo_confianza`) son opcionales aquí: el panel los superpone desde la lista
+`incidencias` emparejando por expedición, así que el bot puede mandarlos en una lista o en la
+otra sin repetirlos.
+
+**`paquetes` es opcional a propósito y `incidencias` no cambia.** Un bot que no la mande sigue
+funcionando exactamente igual y la sección «Pasaron con su ruta» no aparece: un bot viejo no
+puede romperse por un campo que no conoce. Hay un test de cada caso.
+
+*Verificado el 13/08/2026 con el 03/08 real*, construyendo el payload desde el
+`validado_20260803_20260803.csv` del bot: 493 paquetes con ruta, 168 de ellos incidencia,
+`nuevas 325 / actualizadas 168`. Los seis recuentos por ruta salen **idénticos** a los del
+informe en texto: 94/11, 51/30, 159/53, 48/7, 37/7, 104/60. El payload pasa de 100 KB a
+**184 KB**, no del orden de 600 KB como se estimó antes de medirlo.
+
+**Lo que falta, y es del otro repo:** que el bot emita `paquetes` en su corrida. Y decidir
+retención — ~500 filas al día son ~180.000 al año, que no es problema para Postgres pero sí
+una decisión que conviene tomar antes de producción (§8).
+
+**Para quién es.** Para la agencia. Responde una pregunta muy concreta —*¿algún paquete se fue
+en la furgoneta equivocada ayer, y de quién?*— y de ella sale una conversación con un
+mensajero. Eso obliga a que la pantalla sea prudente: cada fila es una acusación sobre una
+persona real.
+
+##### Los datos que ya están guardados
+
+Todo viene de `incident_runs` (una fila por jornada) y `run_packages` (un paquete evaluado); las
+migraciones explican campo a campo. Lo que importa para pintar:
+
+| Campo | Para qué |
+|---|---|
+| `run.reliable` | Si es `false`, esa corrida no pudo consultar bastantes envíos del día. |
+| `run.shipments` / `evaluated` / `without_route` / `without_belt_time` | El denominador: cuántos envíos hubo y cuántos se pudieron mirar de verdad. |
+| `run.alerts` | Alertas del día, ya redactadas, con su `tipo` y las rutas implicadas. |
+| `confidence` + `confidence_reasons` | Si el hallazgo se sostiene, y por qué no. |
+| `type` | `tanda_de_otra_ruta` (hay a quién señalar) \| `fuera_de_tanda` (no lo hay). |
+| `assigned_route_name` / `assigned_courier_name` | De quién era el paquete, **aquel día**. |
+| `observed_route_name` | Quién lo recogió. Nulo si `type` es `fuera_de_tanda`. |
+| `compatible_routes` | Si no está vacío, la tanda la compartían varias rutas: la acusación no señala a una sola. |
+| `belt_time`, `deviation_minutes`, `barcode` | El detalle para contrastar contra GLS Atlas. |
+| `withdrawn_at` | Dejó de venir en un reenvío. Fuera del listado por defecto. |
+
+##### Cinco obligaciones que no son negociables
+
+1. **`confidence` manda sobre el diseño.** No es una columna más ni un icono discreto. Del
+   03/08: **160 de 168 son de confianza baja**. Una pantalla que las liste todas igual presenta
+   160 sospechas que el propio bot marca como no concluyentes con la misma autoridad que las 8
+   que sí lo son. Lo natural es que **lo firme se vea primero y lo dudoso vaya aparte**, con su
+   motivo escrito en palabras, no con un código: `ruta_dispersa` → *«esa ruta pasó desperdigada
+   por la cinta ese día»*; `tanda_compartida` → *«dos furgonetas descargaron juntas: por la
+   hora no se puede saber cuál lo llevó»*.
+2. **`reliable = false` se avisa arriba y en grande.** Una jornada dudosa no cubre todos los
+   envíos, y leerla como completa lleva a concluir «no hubo más incidencias» cuando lo cierto
+   es «no se pudo mirar».
+3. **Los dos `type` no se mezclan en la misma lista.** `tanda_de_otra_ruta` señala a alguien;
+   `fuera_de_tanda` sólo dice que el paquete pasó descolgado, sin culpable. Fueron 112 y 56 el
+   03/08. Juntarlos convierte 56 hechos neutros en 56 acusaciones.
+4. **Para mostrar, usar los nombres copiados, nunca las relaciones.** `assigned_route_name` y
+   `assigned_courier_name`, no `$incident->assignedRoute->name`. Son la foto del día: si
+   renombran la ruta o reasignan al conductor, la incidencia debe seguir diciendo lo que pasó.
+   Las FK son para agrupar y enlazar. Hay un test que lo fija.
+5. **`withdrawn_at` fuera del listado por defecto**, pero localizable. Existe para poder ver
+   que algo estuvo y dejó de estar; usar `RunPackage::current()` o `$run->currentIncidents()`.
+
+##### Los números reales del 03/08, para diseñar contra ellos
+
+No son un ejemplo inventado: están guardados en la base de desarrollo.
+
+```
+983 envíos | 459 evaluados | 490 sin ruta | 34 sin hora de cinta
+168 incidencias → 160 de confianza baja, 8 alta
+                  112 acusan a otra ruta, 56 pasaron descolgados
+
+quién recogió de quién (vigentes, agrupado):
+   Ruta 3 → Ruta 1 ... 51  (baja)      Ruta 4 → Ruta 1 ...  3  (ALTA)
+   Ruta 6 → Ruta 5 ... 21  (baja)      Ruta 5 → Ruta 3 ...  3  (baja)
+   Ruta 6 → Ruta 3 ... 11  (baja)      Ruta 2 → Ruta 3 ...  2  (baja)
+   Ruta 1 → Ruta 3 ...  9  (baja)
+```
+
+**El dato que debería decidir la pantalla:** las 8 incidencias concluyentes de ese día son de
+**dos comercios** — Imperio Corinto (6) y CAI YUN LAI (2). O sea que el contenido accionable
+de una jornada de 983 envíos son dos conversaciones. Si la pantalla abre con una tabla de 168
+filas paginada de 20 en 20, esas dos se pierden en la página cuatro.
+
+##### Estructura sugerida
+
+Es una sugerencia, no un mandato; lo de arriba sí es obligatorio.
+
+- **Selector de jornada** (por defecto la última) con su cabecera: fecha, el aviso de
+  `reliable` si toca, y el balance «168 incidencias sobre 459 envíos evaluados de 983».
+- **Lo concluyente primero**: las de confianza alta, agrupadas por comercio, que es como se
+  actúa —se habla con un mensajero de un comercio, no de un paquete suelto.
+- **Quién recogió de quién**: el agregado `assigned_route_name` × `observed_route_name` con su
+  recuento. Es la respuesta directa a la pregunta del negocio.
+- **Lo dudoso, aparte y plegado**, con el motivo en palabras.
+- **Los descolgados** (`fuera_de_tanda`), en su propia sección y sin lenguaje de culpa.
+- **Las alertas del día** de `run.alerts`, que ya vienen redactadas.
+- **Detalle de un paquete** bajo demanda: `barcode`, `belt_time`, `deviation_minutes` y
+  `compatible_routes`, que es lo que permite contrastarlo en GLS Atlas.
+
+##### Qué reutilizar y qué no
+
+Vale `CrudScreen`... **hasta cierto punto: esto no es un CRUD.** Nadie crea ni edita una
+incidencia; las escribe el bot. De ahí sirven la paginación —incluido `paginationView()`, que
+es el único sitio donde Livewire lo respeta (§7)— y los componentes de `ui/`. No sirven el
+modal de alta, la confirmación de baja ni el historial de auditoría: estas tablas no son
+`Auditable` a propósito.
+
+##### Con qué datos desarrollar
+
+La base de desarrollo **ya tiene el 03/08 cargado**. Si hace falta repoblarla, el bot lo manda
+con `python -m src.panel salidas/validado_20260803_20260803.csv --enviar` desde su repo, o se
+puede hacer un `POST /api/incidencias` con el JSON que guarda en `salidas/panel_20260803.json`.
+Conviene además un *factory* o *seeder* para los tests, con al menos: una jornada con
+`reliable = false`, una incidencia de cada `type`, una de cada `confidence`, una con
+`compatible_routes` no vacío y una retirada.
+
+##### Cómo se verifica
+
+Tests de pantalla como los del CRUD, y que fijen las obligaciones, no el maquetado:
+
+- una jornada con `reliable = false` muestra el aviso;
+- una incidencia de confianza baja **no** se presenta igual que una de confianza alta;
+- una `fuera_de_tanda` no aparece en la lista de acusaciones a otra ruta;
+- una retirada no sale en el listado por defecto;
+- renombrar la ruta después de guardar no cambia lo que muestra la incidencia;
+- la pantalla no dispara una consulta por fila.
+
+#### Orden de ataque
+
+```
+bot A ──▶ bot B ──▶ bot D
+                          ┌── panel A ──▶ bot C
+panel B ──▶ panel C ──────┘
+```
+
+**Hechas el 13/08/2026: bot A, bot B, panel A, bot C y panel B.** El ciclo funciona de punta a
+punta salvo automatizarlo: el bot baja el maestro del panel, analiza, y sube las incidencias,
+que este panel guarda y ya enseña. **Hecha también panel C** el 13/08/2026. Queda **bot D**
+—engancharlo en la corrida diaria— y **panel D**, el backfill del `codigo`.
+
+Antes de producción hay que decidir además dónde se despliega cada uno y cómo se alcanzan por
+> **Corregido el 13/08/2026: el panel perdía el offset de las horas que manda el bot.**
+> `Carbon::parse()` lee bien el `-04:00`, pero Laravel escribe la fecha con formato
+> `Y-m-d H:i:s`, **sin zona**, y Postgres la interpreta en la suya. Resultado: un `generado`
+> de `09:38:58-04:00` se guardaba como `09:38:58 UTC`, cuatro horas antes de lo real. No era
+> hipotético — el reloj del servidor del bot va en `-04:00` ahora mismo. Arreglado con `->utc()`
+> antes de escribir, en `IncidentIntakeController`. `hora_cinta` se salvaba de milagro porque
+> el bot la manda ya en `+00:00`, y es justo el dato que sostiene el «pasó en la tanda de otra
+> ruta».
+
+red (§8), y revisar la hora del servidor del bot: hoy su reloj no está en hora de Madrid y
+calcula qué día analizar con la zona local.
+
 ## 8. Pendientes y decisiones abiertas
 
-- [ ] **Cerrar con el repo del bot el cambio de `ruta` a texto** (§3). Es lo único que
-      bloquea dar la fase 2 por terminada: el código está hecho y probado, falta el acuerdo.
+- [x] **Cerrar con el repo del bot el cambio de `ruta` a texto** (§3). Acordado el
+      13/08/2026 y anotado en el `CONTEXT.md` §11.4 del bot; falta que el bot lo implemente.
       Apuntar el `RUTAS_URL` del bot a `http://localhost:8000/api/rutas` y hacer una corrida
       real es la forma de comprobarlo de punta a punta.
+- [ ] **Todo el trabajo pendiente con el bot está planificado en la fase 6 de §7**: añadir los
+      `id` al maestro, guardar las incidencias, la pantalla y el backfill del `codigo`. Los
+      dos puntos que estaban sueltos aquí se movieron allí, con su orden y su verificación.
+- [ ] **¿Estado de gestión sobre las incidencias?** (revisada, comentada, asignada). Sigue sin
+      decidirse, y sigue sin bloquear: el *upsert* de la fase 6.B sólo escribe las columnas que
+      manda el bot, así que añadir columnas propias del panel más adelante no choca con él.
 - [ ] **¿Pest?** §7 pedía el test de contrato en Pest y está en PHPUnit, porque Pest no está
       instalado y añadirlo choca con la regla 2 de `CLAUDE.md`. Decisión pendiente.
 - [ ] **Backfill de `codigo`** para los comercios que lo tengan. Se puede extraer del portal

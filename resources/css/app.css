@@ -5,6 +5,29 @@
 
 @source '../views';
 
+/* Alpine sólo aplica `x-show` cuando arranca, así que sin esta regla todo lo
+   que nace oculto —el velo de la barra en móvil, los grupos plegados— se pinta
+   un instante antes de esconderse. Se ve como un parpadeo en cada carga. */
+[x-cloak] {
+    display: none !important;
+}
+
+/* Las tablas anchas van dentro de un `.overflow-x-auto` para que scrolleen
+   solas en móvil. Eso funciona —la caja scrollea—, pero **no impide que la
+   página entera se arrastre**: el navegador sigue propagando el ancho de la
+   tabla al documento. Medido a 390 px: el listado de comercios se movía 356 px
+   en horizontal, dejando media pantalla en blanco.
+
+   `contain: paint` corta esa propagación. Se probaron antes, y ninguna sirvió,
+   `overflow-x: hidden` en `main`, en `body` y en la raíz, `max-width: 100%` y
+   `min-width: 0` en el envoltorio.
+
+   Va aquí y no clase a clase porque son cuatro pantallas con el mismo patrón y
+   la siguiente que añada una tabla lo hereda sin saber que esto existe. */
+.overflow-x-auto {
+    contain: paint;
+}
+
 @theme {
     --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
         'Segoe UI Symbol', 'Noto Color Emoji';

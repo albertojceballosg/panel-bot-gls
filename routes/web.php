@@ -22,6 +22,13 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/merchants', 'merchants')->name('merchants');
     Route::livewire('/audit-logs', 'audit-logs')->name('audit-logs');
 
+    // Operaciones: lo que sube el bot, no lo que mantiene el cliente.
+    Route::livewire('/incidents', 'incidents')->name('incidents');
+
+    // La fecha en la URL y no el id: es la clave natural de una jornada
+    // (`incident_runs.run_date` es único) y hace el enlace legible.
+    Route::livewire('/incidents/{date}', 'incident-run')->name('incident-run');
+
     // POST y no GET: un enlace de salida se puede disparar desde fuera, o lo
     // precarga el navegador.
     Route::post('/logout', function (Request $request) {

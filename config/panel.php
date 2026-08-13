@@ -24,13 +24,15 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Token de GET /api/rutas
+    | Token de la API del bot
     |--------------------------------------------------------------------------
     |
-    | El bot lo manda como `Authorization: Bearer <token>`. Debe coincidir con
-    | el RUTAS_TOKEN del .env de bot-gls.
+    | El bot lo manda como `Authorization: Bearer <token>` en las dos
+    | direcciones: `GET /api/rutas` y `POST /api/incidencias`. Un solo token
+    | porque hay un solo consumidor; debe coincidir con el RUTAS_TOKEN y el
+    | PANEL_TOKEN del .env de bot-gls.
     |
-    | Es lo único que protege el endpoint, y el endpoint devuelve el maestro
+    | Es lo único que protege los endpoints, y uno de ellos devuelve el maestro
     | completo del cliente (§10): tratarlo como una contraseña. Sin valor, el
     | middleware corta todas las peticiones — nunca abre.
     |

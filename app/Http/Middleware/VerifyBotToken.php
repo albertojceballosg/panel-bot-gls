@@ -15,8 +15,15 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class VerifyBotToken
 {
+    private string $route = 'la API del bot';
+
     public function handle(Request $request, Closure $next): Response
     {
+        // Guarda a qué endpoint iba, para que el log lo diga. Antes estaba
+        // escrito a mano como "GET /api/rutas" y dejó de ser cierto en cuanto
+        // el middleware pasó a proteger también el POST de incidencias.
+        $this->route = $request->method().' /'.$request->path();
+
         $expected = config('panel.bot_token');
 
         // Sin token configurado se corta todo. Sin esto, un despliegue que se
@@ -46,7 +53,7 @@ class VerifyBotToken
      */
     private function reject(string $reason): Response
     {
-        Log::warning("GET /api/rutas rechazado: {$reason}.");
+        Log::warning("{$this->route} rechazado: {$reason}.");
 
         return response()
             ->json(['error' => 'No autorizado'], Response::HTTP_UNAUTHORIZED)
