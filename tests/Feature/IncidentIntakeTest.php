@@ -88,6 +88,7 @@ class IncidentIntakeTest extends TestCase
             'tipo' => RunPackage::TYPE_OTHER_ROUTE,
             'hora_cinta' => '2026-08-03T19:52:52+00:00',
             'desvio_min' => 22.3,
+            'volumen_m3' => 0.129,
             'rutas_compatibles' => [],
             'confianza' => RunPackage::CONFIDENCE_LOW,
             'motivo_confianza' => ['ruta_dispersa'],
@@ -146,6 +147,50 @@ class IncidentIntakeTest extends TestCase
         $this->assertFalse($incidents['A']->isConclusive());
         $this->assertSame(['ruta_dispersa', 'tanda_compartida'], $incidents['A']->confidence_reasons);
         $this->assertTrue($incidents['B']->isConclusive());
+    }
+
+    public function test_it_stores_the_volume_in_cubic_metres(): void
+    {
+        $this->send($this->payload([$this->incident(['volumen_m3' => 1.091])]))->assertOk();
+
+        $this->assertSame(1.091, RunPackage::firstOrFail()->volume_m3);
+    }
+
+    public function test_a_missing_volume_is_null_and_not_zero(): void
+    {
+        // GLS devuelve 0 en parte de los envíos —60 de 983 el 03/08— y el bot lo traduce a
+        // nulo antes de mandarlo. Aquí eso tiene que quedarse nulo: guardar cero falsearía a
+        // la baja el volumen de una ruta y nadie vería que el dato faltaba. Cualquier suma en
+        // la interfaz debe decir sobre cuántos envíos se hizo.
+        $this->send($this->payload([
+            $this->incident(['expedicion' => 'CON', 'volumen_m3' => 0.032]),
+            $this->incident(['expedicion' => 'SIN', 'volumen_m3' => null]),
+        ]))->assertOk();
+
+        $packages = RunPackage::all()->keyBy('shipment_id');
+        $this->assertSame(0.032, $packages['CON']->volume_m3);
+        $this->assertNull($packages['SIN']->volume_m3);
+
+        // La suma ignora los nulos, que es justo lo que se quiere: 0,032 y no 0,032 "de dos".
+        $this->assertSame(0.032, (float) RunPackage::sum('volume_m3'));
+        $this->assertSame(1, RunPackage::whereNotNull('volume_m3')->count());
+    }
+
+    public function test_a_bot_that_does_not_send_the_volume_still_works(): void
+    {
+        // El campo se añadió el 13/08/2026; un bot anterior no lo manda y no puede romperse.
+        $sinVolumen = $this->incident();
+        unset($sinVolumen['volumen_m3']);
+
+        $this->send($this->payload([$sinVolumen]))->assertOk();
+
+        $this->assertNull(RunPackage::firstOrFail()->volume_m3);
+    }
+
+    public function test_a_negative_volume_is_rejected(): void
+    {
+        $this->send($this->payload([$this->incident(['volumen_m3' => -1])]))
+            ->assertStatus(422);
     }
 
     public function test_an_out_of_batch_incident_has_no_observed_route(): void

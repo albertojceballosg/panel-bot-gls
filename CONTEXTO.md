@@ -202,6 +202,7 @@ campo de apoyo.
       "tipo": "tanda_de_otra_ruta",
       "hora_cinta": "2026-08-03T19:52:52+00:00",
       "desvio_min": 22.3,
+      "volumen_m3": 0.129,
       "rutas_compatibles": [],
       "confianza": "baja",
       "motivo_confianza": ["ruta_dispersa"]
@@ -225,6 +226,7 @@ campo de apoyo.
 | `tipo` | `tanda_de_otra_ruta` (pasó en la tanda principal de otra ruta: hay a quién señalar) \| `fuera_de_tanda` (no pasó con el grueso de su ruta, pero esa tanda no era de nadie en particular). |
 | `ruta_observada` | La ruta en cuya tanda pasó el paquete. Es la acusación, y **es `null` cuando `tipo` es `fuera_de_tanda`** — 56 de las 168 del 03/08. Son dos hallazgos distintos: uno señala a alguien y el otro no. No mezclarlos en la misma lista. |
 | `mensajero` | **Foto del día, no relación.** Texto, dentro de la ruta, a propósito: si el panel reasigna el conductor después, la incidencia debe seguir diciendo quién conducía aquel día. No enlazar contra `couriers` para pintarlo. |
+| `volumen_m3` | Volumen del envío en m³ (columna `volume_m3`). Añadido el 13/08/2026. **Nulo, no cero, cuando el portal no lo trae**: GLS devuelve `0` en parte de los envíos —29 de 493 el 03/08— y ahí un cero significa «no lo sé». Al sumarlo, la interfaz **tiene que decir sobre cuántos envíos** se hizo la suma, o dará a entender que una ruta ocupa menos de lo que ocupa. Opcional: un bot anterior a esa fecha no lo manda. |
 | `rutas_compatibles` | Otras rutas que compartían esa tanda. Vacío si la tanda era de una sola. |
 | `confianza` | `alta` \| `baja`. |
 | `motivo_confianza` | Lista, posiblemente con los dos: `ruta_dispersa` \| `tanda_compartida`. Vacía si `confianza` es `alta`. |

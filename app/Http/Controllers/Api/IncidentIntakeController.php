@@ -78,6 +78,11 @@ class IncidentIntakeController
             'paquetes.*.tipo' => ['nullable', 'in:'.RunPackage::TYPE_OTHER_ROUTE.','.RunPackage::TYPE_OUT_OF_BATCH],
             'paquetes.*.confianza' => ['nullable', 'in:'.RunPackage::CONFIDENCE_HIGH.','.RunPackage::CONFIDENCE_LOW],
 
+            // Metros cúbicos. Nulo cuando el portal no lo trae, nunca negativo. Opcional
+            // porque un bot anterior al 13/08/2026 no lo manda.
+            'paquetes.*.volumen_m3' => ['nullable', 'numeric', 'min:0'],
+            'incidencias.*.volumen_m3' => ['nullable', 'numeric', 'min:0'],
+
             'alertas' => ['present', 'array'],
             'alertas.*.tipo' => ['required', 'string'],
             'alertas.*.texto' => ['required', 'string'],
@@ -243,6 +248,10 @@ class IncidentIntakeController
 
             'belt_time' => isset($row['hora_cinta']) ? Carbon::parse($row['hora_cinta'])->utc() : null,
             'deviation_minutes' => $row['desvio_min'] ?? null,
+
+            // Nulo si el portal no lo trajo. El bot ya convierte a nulo el cero que devuelve
+            // GLS, porque ahí un cero es "no lo sé" y no "no ocupa nada" (ver la migración).
+            'volume_m3' => $row['volumen_m3'] ?? null,
             'compatible_routes' => $row['rutas_compatibles'] ?? [],
             'confidence' => $row['confianza'] ?? null,
             'confidence_reasons' => $row['motivo_confianza'] ?? [],

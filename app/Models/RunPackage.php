@@ -26,7 +26,7 @@ class RunPackage extends Model
         'merchant_id', 'merchant_name',
         'assigned_route_id', 'assigned_route_name', 'assigned_courier_name',
         'observed_route_id', 'observed_route_name',
-        'type', 'belt_time', 'deviation_minutes',
+        'type', 'belt_time', 'deviation_minutes', 'volume_m3',
         'compatible_routes', 'confidence', 'confidence_reasons', 'withdrawn_at',
     ];
 
@@ -45,6 +45,8 @@ class RunPackage extends Model
             'belt_time' => 'datetime',
             'withdrawn_at' => 'datetime',
             'deviation_minutes' => 'float',
+            // Nulo si el portal no dio el dato. No confundir con cero: ver la migración.
+            'volume_m3' => 'float',
             'compatible_routes' => 'array',
             'confidence_reasons' => 'array',
         ];
