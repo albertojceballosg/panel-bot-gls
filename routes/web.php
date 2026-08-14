@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\DatabaseBackup;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
@@ -32,6 +33,26 @@ Route::middleware('auth')->group(function () {
     // La semana va en la query (`?semana=`) y no en el path: es un filtro con
     // valor por defecto —la semana en curso—, no otra pantalla.
     Route::livewire('/capacity-calendar', 'capacity-calendar')->name('capacity-calendar');
+
+    // Sistema: mantenimiento del panel, no del maestro.
+    Route::livewire('/backups', 'backups')->name('backups');
+
+    // El volcado se genera y se manda al navegador en la misma petición. Ruta
+    // normal y no acción de Livewire: una descarga la sirve el navegador, y
+    // pasarla por Livewire obligaría a cargar el fichero entero en memoria.
+    //
+    // `deleteFileAfterSend` es la mitad importante: el temporal se borra al
+    // terminar el envío, así que en el servidor no queda ninguna copia con los
+    // datos del cliente dentro (§9).
+    Route::get('/backups/download', function (DatabaseBackup $backups) {
+        try {
+            $ruta = $backups->dump();
+        } catch (RuntimeException $e) {
+            return redirect()->route('backups')->with('error', $e->getMessage());
+        }
+
+        return response()->download($ruta, $backups->filename())->deleteFileAfterSend();
+    })->name('backups.download');
 
     // POST y no GET: un enlace de salida se puede disparar desde fuera, o lo
     // precarga el navegador.

@@ -1234,6 +1234,52 @@ Antes de producción hay que decidir además dónde se despliega cada uno y cóm
 red (§8), y revisar la hora del servidor del bot: hoy su reloj no está en hora de Madrid y
 calcula qué día analizar con la zona local.
 
+### Fase 7 — Copias de seguridad. Hecha el 13/08/2026
+
+`GET /backups`, en el bloque **Sistema** de la barra lateral. Dos cosas: descargar un volcado
+de la base entera y restaurar la base desde uno descargado antes.
+
+**El panel no guarda copias.** El volcado se genera en un temporal del sistema, se manda al
+navegador y el temporal se borra con `deleteFileAfterSend()`. No hay carpeta de copias que
+vigilar, y sobre todo no hay volcados con los nombres y códigos de los comercios (§9)
+acumulándose en el servidor. La contrapartida, que la pantalla dice en voz alta: **la única
+copia es la que se lleve quien la descarga**, y para deshacer una restauración hay que haberse
+bajado antes el estado actual.
+
+`pg_dump`/`pg_restore` y no un volcado escrito en PHP: un fichero de `INSERT`s propio no
+reproduce la columna generada de `merchants`, los índices únicos parciales de §4 ni las
+secuencias, y una copia que no restaura no es una copia. Van en la imagen de desarrollo
+—`Dockerfile`, del repositorio de PostgreSQL y no del de Debian, porque el cliente 15 de
+bookworm se niega a volcar el servidor 17—. No son una dependencia de las que veta la regla 2
+de `CLAUDE.md`: no hay paquete de Composer ni de npm por medio, son las herramientas del motor
+que ya usamos. La pantalla comprueba que están y lo dice si faltan, en vez de dejar que los
+botones fallen uno a uno.
+
+Formato `custom` (`-Fc`), y la restauración con `--clean --if-exists --single-transaction
+--exit-on-error`: limpia antes de escribir —si no, los registros nuevos quedarían mezclados
+con los del volcado— y es todo o nada, de modo que un error a mitad deja la base como estaba.
+Antes de lanzarlo se hace `DB::disconnect()`: la conexión de la propia petición tiene tomadas
+las tablas que `--clean` necesita tirar, y sin eso la restauración se espera a sí misma.
+
+Tres cautelas, porque restaurar no se deshace:
+
+1. **Hay que escribir `RESTAURAR`**, y se comprueba en el servidor. Elegir un fichero y pulsar
+   un botón es demasiado fácil un martes por la mañana.
+2. **El fichero se valida antes de preguntar**: si no empieza por `PGDMP` no es un volcado de
+   este motor y se dice ahí mismo, sin hacer escribir la palabra para nada.
+3. **Al terminar se cierra la sesión.** Las sesiones viven en la base (`SESSION_DRIVER`), así
+   que la de quien restaura deja de existir en cuanto entra el volcado; se sale al login con el
+   aviso, que es lo honesto frente a quedarse en una pantalla que ya no responde.
+
+La contraseña de la base va por entorno (`PGPASSWORD`) y nunca como argumento: la línea de
+mandato la ve cualquiera que liste los procesos de la máquina (§10). Hay un test que lo fija.
+
+Los tests no restauran de verdad —`pg_restore` sobre la base de test la dejaría sin las tablas
+que el propio test necesita—, así que fijan el mandato con `Process::fake()`. El volcado sí se
+hace de verdad, y se comprueba que `pg_restore --list` lo sabe leer. El ciclo completo
+—volcar, escribir después, restaurar y ver que lo escrito después desapareció— se verificó a
+mano contra una base desechable el 13/08/2026.
+
 ## 8. Pendientes y decisiones abiertas
 
 - [x] **Cerrar con el repo del bot el cambio de `ruta` a texto** (§3). Acordado el
@@ -1316,3 +1362,9 @@ El CSV tiene cabecera `name,courier,pickup_route` y el seeder la verifica antes 
   `rutas.xlsx` ni el CSV derivado se versionan (§9).
 - `GET /api/rutas` devuelve el maestro completo. El token es lo único que lo protege:
   tratarlo como una contraseña.
+- **La pantalla de copias (§7, fase 7) es el permiso más fuerte del panel**, y hoy lo tiene
+  cualquiera que entre: no hay roles. Quien descarga una copia se lleva la base entera del
+  cliente en un fichero, y quien restaura una la sustituye. Mientras el panel lo use sólo el
+  equipo del cliente es asumible; el día que entre alguien más, esto es lo primero que hay que
+  poner detrás de un rol. La contraseña de la base nunca viaja en la línea de mandato: va por
+  `PGPASSWORD`, porque los argumentos de un proceso los ve cualquiera con acceso a la máquina.

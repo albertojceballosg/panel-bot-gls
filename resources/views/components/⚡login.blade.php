@@ -117,6 +117,12 @@ new #[Layout('components.layouts.guest')] class extends Component
         <p class="mt-1 text-sm text-slate-500">Maestro de rutas de recogida</p>
     </div>
 
+    {{-- Lo que trae quien llega expulsado: hoy, la restauración de una copia,
+         que se lleva por delante la sesión (§7, fase 7). --}}
+    @if (session('ok'))
+        <x-ui.alert type="success" class="mb-4">{{ session('ok') }}</x-ui.alert>
+    @endif
+
     <x-ui.card>
         <form wire:submit="login" class="space-y-4">
             <x-ui.field label="Correo" for="email" :error="$errors->first('email')">
