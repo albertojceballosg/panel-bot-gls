@@ -1175,8 +1175,8 @@ Tests de pantalla como los del CRUD, y que fijen las obligaciones, no el maqueta
 
 #### Calendario de capacidades (fase 6.D) — hecho el 13/08/2026
 
-`GET /capacity-calendar`, colgando de **Operaciones**. Una tabla por semana: una fila por UT,
-una columna por día y la media de la semana. La semana por defecto es la en curso, y el filtro
+`GET /capacity-calendar`, colgando de **Operaciones**. Una tabla por semana: una fila por UT y
+una columna por día. La semana por defecto es la en curso, y el filtro
 va en la query (`?semana=`, el lunes) porque es un filtro con valor por defecto, no otra
 pantalla; se mueve con flechas o eligiendo cualquier día, que salta al lunes de su semana.
 
@@ -1190,23 +1190,34 @@ Cuatro decisiones que no son de estilo:
    paquete que pasó en la tanda de otra ruta sigue contando aquí para la suya: esto sirve para
    planificar, y las desviaciones son el asunto de la pantalla de incidencias.
 
-3. **Toda suma dice sobre cuántos envíos se hizo**, la obligación de §3. Un día con la mitad de
-   los volúmenes nulos no es un día flojo, y sin el denominador al lado se lee como tal. Los
-   nulos no suman como cero por lo mismo.
+3. **Una suma incompleta se marca**, la obligación de §3. Un día con la mitad de los volúmenes
+   nulos no es un día flojo, y sin aviso se lee como tal; los nulos no suman como cero por lo
+   mismo. El denominador «1 de 3 envíos» estuvo debajo de cada celda hasta el **14/08/2026**:
+   con tres cifras por celda la tabla no se leía. Hoy el aviso vive **sólo en el tooltip** de la
+   celda, que dice cuántos envíos respaldan la suma; el ámbar duró unas horas y se quitó el
+   mismo día. Es mucho menos evidente que antes, y es una decisión consciente: la pantalla se
+   lee en diagonal y el aviso repetido en cada celda la hacía ilegible.
 
 4. **Nada se esconde por no estar en el maestro.** Quien se dio de baja después de mover
    volumen esa semana conserva su fila, marcada, y las rutas que aquel día no llevaba nadie van
    a una fila «Sin UT asignada». Si no, la suma de la semana no cuadraría con la de incidencias
    y nadie sabría por qué.
 
-La media es **por día con volumen conocido**, no entre siete: dividir entre la semana natural
-castigaría a quien libra el sábado. Un día sin corrida se marca como tal —no es un día sin
+La cifra de cada día es **qué parte de la furgoneta ocupó** —con el volumen en m³ al lado, en
+pequeño, que sigue haciendo falta para cuadrar con incidencias—: la suma del día entre
+`couriers.maximum_volume`. Es la lectura que se busca —4 m³ es mucho o poco según quién los
+lleve— y por encima del 100 % es un día que no cabía. Sin capacidad declarada no hay entre qué
+dividir, así que sale un guion; una capacidad de cero se trata igual, porque es un dato mal
+metido y no un divisor. **Sustituyó a la media semanal el 14/08/2026**, que respondía a otra
+pregunta: la media decía cuánto carga una UT y esto dice si el día le cabe.
+
+Un día sin corrida se marca como tal —no es un día sin
 trabajo— y uno con la corrida no fiable, también. La tabla entera se arma con **tres
 consultas** —corridas, agregado y maestro— y hay un test que lo fija: agrupar en SQL es lo que
 la mantiene en pie con el maestro entero delante.
 
-`couriers.maximum_volume` (§4) se enseña como columna y tiñe en rojo el día que se pasa. Es el
-único uso que hoy tiene ese campo.
+`couriers.maximum_volume` (§4) se enseña como columna, es el divisor de la ocupación y tiñe en
+rojo el día que se pasa. Es el único uso que hoy tiene ese campo.
 
 #### Orden de ataque
 

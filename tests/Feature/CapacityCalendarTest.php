@@ -96,23 +96,51 @@ class CapacityCalendarTest extends TestCase
         $this->assertNull($fila['days'][$this->lunes->copy()->addDays(2)->toDateString()]);
     }
 
-    public function test_the_average_is_per_day_with_data_and_not_per_week(): void
+    public function test_each_day_reports_how_much_of_the_van_it_filled(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 3.0);
+        $this->package($this->runOn($this->lunes->copy()->addDay()), 'Freddy GLS', 12.5);
+
+        $fila = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS');
+
+        $this->assertSame(0.3, $fila['days'][$this->lunes->toDateString()]['usage']);
+
+        // Más de uno es un día que no cabía en la furgoneta, que es justo lo que
+        // se viene a mirar aquí.
+        $this->assertSame(1.25, $fila['days'][$this->lunes->copy()->addDay()->toDateString()]['usage']);
+
+        Livewire::test('capacity-calendar')->assertSee('30 %')->assertSee('125 %');
+    }
+
+    public function test_without_a_declared_capacity_there_is_no_usage_to_show(): void
     {
         Courier::create(['name' => 'Freddy GLS']);
 
         $this->package($this->runOn($this->lunes), 'Freddy GLS', 3.0);
-        $this->package($this->runOn($this->lunes->copy()->addDay()), 'Freddy GLS', 5.0);
 
-        $fila = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS');
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
 
-        // 8 entre 2 días trabajados, no entre los 7 de la semana.
-        $this->assertSame(4.0, $fila['average']);
-        $this->assertSame(2, $fila['average_days']);
+        $this->assertSame(3.0, $celda['volume']);
+        $this->assertNull($celda['usage']);
     }
 
-    public function test_it_reports_how_many_shipments_the_sum_covers(): void
+    public function test_a_capacity_of_zero_does_not_blow_up_the_usage(): void
     {
-        Courier::create(['name' => 'Freddy GLS']);
+        // Una furgoneta declarada con cero es un dato mal metido, no un divisor.
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 0]);
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 3.0);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        $this->assertNull($celda['usage']);
+    }
+
+    public function test_it_warns_when_the_sum_does_not_cover_every_shipment(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
 
         $lunes = $this->runOn($this->lunes);
         $this->package($lunes, 'Freddy GLS', 1.5);
@@ -121,28 +149,31 @@ class CapacityCalendarTest extends TestCase
 
         $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
 
-        // Un nulo del portal es "no lo sé", así que no suma como cero pero
-        // tiene que verse en el denominador (§3).
+        // Un nulo del portal es "no lo sé", así que no suma como cero.
         $this->assertSame(1.5, $celda['volume']);
         $this->assertSame(3, $celda['shipments']);
         $this->assertSame(1, $celda['measured']);
 
-        Livewire::test('capacity-calendar')->assertSee('1 de 3 envíos');
+        // El día ocupó más de ese 15 %, y eso no puede quedar callado (§3).
+        Livewire::test('capacity-calendar')->assertSee('El portal sólo dio el volumen de 1 de 3 envíos');
     }
 
-    public function test_a_day_without_any_measured_volume_does_not_drag_the_average(): void
+    public function test_a_day_without_any_measured_volume_has_no_usage(): void
     {
-        Courier::create(['name' => 'Freddy GLS']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 12.0]);
 
         $this->package($this->runOn($this->lunes), 'Freddy GLS', 6.0);
         $this->package($this->runOn($this->lunes->copy()->addDay()), 'Freddy GLS', null);
 
         $fila = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS');
+        $martes = $fila['days'][$this->lunes->copy()->addDay()->toDateString()];
 
-        // El martes hubo trabajo pero no se sabe cuánto ocupó: contarlo como un
-        // día más diría que carga la mitad.
-        $this->assertSame(6.0, $fila['average']);
-        $this->assertSame(1, $fila['average_days']);
+        // El martes hubo trabajo pero no se sabe cuánto ocupó: un 0 % diría que
+        // salió de vacío.
+        $this->assertSame(0.5, $fila['days'][$this->lunes->toDateString()]['usage']);
+        $this->assertNull($martes['volume']);
+        $this->assertNull($martes['usage']);
+        $this->assertSame(1, $martes['shipments']);
     }
 
     public function test_withdrawn_packages_do_not_count(): void
@@ -168,7 +199,7 @@ class CapacityCalendarTest extends TestCase
         $fila = $this->fila(Livewire::test('capacity-calendar'), 'Sin trabajo esta semana');
 
         $this->assertNotNull($fila);
-        $this->assertNull($fila['average']);
+        $this->assertSame([null], array_values(array_unique($fila['days'], SORT_REGULAR)));
     }
 
     public function test_volume_of_a_courier_no_longer_in_the_master_is_not_hidden(): void
@@ -211,7 +242,11 @@ class CapacityCalendarTest extends TestCase
             ->assertSet('week', '')
             ->assertViewHas('esLaSemanaEnCurso', true);
 
-        $this->assertSame(2.0, $this->fila($componente, 'Freddy GLS')['average']);
+        $fila = $this->fila($componente, 'Freddy GLS');
+
+        // La de la semana pasada no entra en la fila: sólo el envío de esta.
+        $this->assertSame(2.0, $fila['days'][$this->lunes->toDateString()]['volume']);
+        $this->assertSame(1, $fila['shipments']);
     }
 
     public function test_it_moves_a_week_back_and_forth(): void

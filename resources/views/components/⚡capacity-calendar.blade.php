@@ -80,7 +80,12 @@ new #[Layout('components.layouts.app')] class extends Component
     }
 
     /**
-     * Una fila de la tabla: los siete días, la media y la cobertura.
+     * Una fila de la tabla: los siete días y la cobertura.
+     *
+     * Cada día trae, además del volumen, qué parte de la furgoneta ocupó: el
+     * volumen sumado de ese día entre la capacidad declarada de la UT. Un 1,20
+     * es un día que no cabía. Sin capacidad en el maestro no hay con qué
+     * comparar, así que la ocupación queda a null y la vista pone un guion.
      *
      * @param  Collection<int, object>  $celdas  Las agregadas de esta UT, una por día.
      * @param  Collection<int, Carbon>  $dias
@@ -89,30 +94,32 @@ new #[Layout('components.layouts.app')] class extends Component
     {
         $porDia = $celdas->keyBy('dia');
 
-        // La media es por día trabajado, no por semana natural: dividir entre
-        // siete castigaría a quien libra el sábado y diría que carga menos.
-        // Sólo cuentan los días de los que se sabe algún volumen; uno en el que
-        // el portal no dio ninguno bajaría la media sin ser un día flojo.
-        $conVolumen = $celdas->where('con_volumen', '>', 0);
-
         return [
             'label' => $label,
             'capacity' => $capacity,
             'note' => $note,
-            'days' => $dias->mapWithKeys(function (Carbon $dia) use ($porDia) {
+            'days' => $dias->mapWithKeys(function (Carbon $dia) use ($porDia, $capacity) {
                 $clave = $dia->toDateString();
                 $celda = $porDia[$clave] ?? null;
 
-                return [$clave => $celda === null ? null : [
-                    'volume' => $celda->volumen === null ? null : (float) $celda->volumen,
+                if ($celda === null) {
+                    return [$clave => null];
+                }
+
+                $volumen = $celda->volumen === null ? null : (float) $celda->volumen;
+
+                return [$clave => [
+                    'volume' => $volumen,
+                    // El `> 0` no es paranoia de división por cero: una furgoneta
+                    // declarada con capacidad cero es un dato mal metido, y
+                    // dividir por él daría un infinito en pantalla.
+                    'usage' => $volumen === null || $capacity === null || $capacity <= 0
+                        ? null
+                        : $volumen / $capacity,
                     'shipments' => (int) $celda->envios,
                     'measured' => (int) $celda->con_volumen,
                 ]];
             })->all(),
-            'average' => $conVolumen->isEmpty()
-                ? null
-                : $conVolumen->sum(fn ($c) => (float) $c->volumen) / $conVolumen->count(),
-            'average_days' => $conVolumen->count(),
             'shipments' => $celdas->sum(fn ($c) => (int) $c->envios),
             'measured' => $celdas->sum(fn ($c) => (int) $c->con_volumen),
         ];
@@ -198,6 +205,10 @@ new #[Layout('components.layouts.app')] class extends Component
     // del portal es por envío, y en una suma del día el milímetro cúbico es
     // ruido en una columna que se lee en diagonal.
     $vol = fn (?float $v) => $v === null ? '—' : number_format($v, 2, ',', '.');
+
+    // La ocupación en porcentaje y sin decimales: lo que se busca de un vistazo
+    // es si el día pasó del 100 %, no si fue un 31,4 % o un 31,7 %.
+    $ocupacion = fn (float $u) => number_format($u * 100, 0, ',', '.').' %';
 @endphp
 
 <div>
@@ -259,7 +270,7 @@ new #[Layout('components.layouts.app')] class extends Component
                             @foreach ($dias as $dia)
                                 @php $corrida = $corridas[$dia->toDateString()] ?? null; @endphp
 
-                                <th class="px-4 py-3 text-right font-semibold">
+                                <th @class(['px-4 py-3 text-right font-semibold', 'pr-6' => $loop->last])>
                                     {{ ucfirst($dia->translatedFormat('l')) }}
                                     <span class="block font-normal normal-case">{{ $dia->format('d/m') }}</span>
 
@@ -273,8 +284,6 @@ new #[Layout('components.layouts.app')] class extends Component
                                     @endif
                                 </th>
                             @endforeach
-
-                            <th class="px-6 py-3 text-right font-semibold">Media</th>
                         </tr>
                     </thead>
 
@@ -302,54 +311,54 @@ new #[Layout('components.layouts.app')] class extends Component
                                 @foreach ($dias as $dia)
                                     @php $celda = $row['days'][$dia->toDateString()]; @endphp
 
-                                    <td class="px-4 py-3 text-right tabular-nums">
+                                    <td @class(['px-4 py-3 text-right tabular-nums', 'pr-6' => $loop->last])>
                                         @if ($celda === null)
                                             <span class="text-slate-300">—</span>
                                         @else
-                                            {{-- En rojo lo que no le cabe en la furgoneta: es
-                                                 para lo que se mira esta pantalla. --}}
+                                            {{-- Manda lo que ocupó de la furgoneta, que es la
+                                                 lectura útil: 4 m³ es mucho o poco según quién
+                                                 los lleve. En rojo lo que no le cabe, que es para
+                                                 lo que se mira esta pantalla. Sin capacidad
+                                                 declarada no hay entre qué dividir. --}}
                                             @php
-                                                $pasada = $row['capacity'] !== null
-                                                    && $celda['volume'] !== null
-                                                    && $celda['volume'] > $row['capacity'];
+                                                $pasada = $celda['usage'] !== null && $celda['usage'] > 1;
+
+                                                // El día del que el portal no dio todos los
+                                                // volúmenes ocupó más de lo que dice la cifra. No
+                                                // se marca en la celda —la tabla se lee en
+                                                // diagonal y el aviso repetido la ensuciaba—, pero
+                                                // el recuento queda en el tooltip: §3 no permite
+                                                // dar la suma por completa sin más.
+                                                $incompleta = $celda['measured'] < $celda['shipments'];
+
+                                                $aviso = match (true) {
+                                                    $pasada && $incompleta => 'Se pasa de la capacidad declarada, y aún así el portal sólo dio el volumen de '.$celda['measured'].' de '.$celda['shipments'].' envíos',
+                                                    $pasada => 'Se pasa de la capacidad declarada',
+                                                    $incompleta => 'El portal sólo dio el volumen de '.$celda['measured'].' de '.$celda['shipments'].' envíos: ocupó más de lo que dice la cifra',
+                                                    default => null,
+                                                };
                                             @endphp
 
-                                            <span @class([
-                                                'font-medium',
-                                                'text-rose-600' => $pasada,
-                                                'text-shell-900' => ! $pasada,
-                                            ]) @if ($pasada) title="Se pasa de la capacidad declarada" @endif>
-                                                {{ $vol($celda['volume']) }}
-                                            </span>
-
-                                            {{-- El denominador va pegado a la cifra, no en una
-                                                 nota al pie: sin él, un día medio medido se lee
-                                                 como un día flojo (§3). --}}
-                                            @if ($celda['measured'] === $celda['shipments'])
-                                                <span class="block text-xs text-slate-400">
-                                                    {{ $celda['shipments'] }} envíos
-                                                </span>
+                                            @if ($celda['usage'] === null)
+                                                <span class="font-semibold text-slate-300"
+                                                      title="Esta UT no tiene capacidad declarada">—</span>
                                             @else
-                                                <span class="block text-xs text-amber-600"
-                                                      title="El portal no dio el volumen de los demás">
-                                                    {{ $celda['measured'] }} de {{ $celda['shipments'] }} envíos
+                                                <span @class([
+                                                    'font-semibold',
+                                                    'text-rose-600' => $pasada,
+                                                    'text-shell-900' => ! $pasada,
+                                                ]) @if ($aviso) title="{{ $aviso }}" @endif>
+                                                    {{ $ocupacion($celda['usage']) }}
                                                 </span>
                                             @endif
+
+                                            {{-- El volumen del que sale, en pequeño: el dato bruto
+                                                 sigue haciendo falta para cuadrar con incidencias. --}}
+                                            <span class="ml-1 text-xs text-slate-400"
+                                                  @if ($aviso) title="{{ $aviso }}" @endif>{{ $vol($celda['volume']) }}</span>
                                         @endif
                                     </td>
                                 @endforeach
-
-                                <td class="px-6 py-3 text-right tabular-nums">
-                                    @if ($row['average'] === null)
-                                        <span class="text-slate-300">—</span>
-                                    @else
-                                        <span class="font-semibold text-shell-900">{{ $vol($row['average']) }}</span>
-                                        <span class="block text-xs text-slate-400">
-                                            sobre {{ $row['average_days'] }}
-                                            {{ $row['average_days'] === 1 ? 'día' : 'días' }}
-                                        </span>
-                                    @endif
-                                </td>
                             </tr>
                         @endforeach
                     </tbody>
@@ -358,11 +367,13 @@ new #[Layout('components.layouts.app')] class extends Component
 
             <div class="border-t border-slate-200 px-6 py-3 text-xs text-slate-500">
                 El volumen de un día es el de los paquetes que el maestro asignaba a la ruta de esa UT,
-                estuviera donde estuviera al final el paquete. <strong>La media es por día con datos</strong>,
-                no entre siete: quien libra el sábado no carga menos por librar.
-                Las cifras en ámbar avisan de que el portal no dio el volumen de todos los envíos —ahí un
-                cero significaría «no lo sé», así que no se suma— y las rojas, de que el día se pasa de la
-                capacidad declarada de la furgoneta.
+                estuviera donde estuviera al final el paquete. <strong>El porcentaje es ese volumen entre
+                la capacidad declarada de su furgoneta</strong>, así que sale un guion en las UT que no la
+                tienen puesta en el maestro.
+                Las cifras en rojo son los días que se pasan de la capacidad declarada de la furgoneta.
+                Cuando el portal no da el volumen de todos los envíos ese hueco no se suma como cero
+                —significaría «no lo sé»—, así que la ocupación real puede ser mayor que la que se ve:
+                pasa el ratón por encima de la cifra para saber cuántos envíos la respaldan.
             </div>
         @endif
     </x-ui.card>
