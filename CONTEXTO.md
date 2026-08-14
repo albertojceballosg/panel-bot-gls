@@ -286,7 +286,7 @@ de §8 sobre dónde se despliega cada uno. En desarrollo el bot apunta a `http:/
 ```
 pickup_routes:  id, name (unique†), deleted_at, timestamps
 couriers:       id, name (unique†), pickup_route_id (nullable, unique†),
-                deleted_at, timestamps
+                maximum_volume (decimal 8,3, nullable), deleted_at, timestamps
 merchants:      id, name, normalized_name (generada, unique†),
                 code (int, nullable, unique†), pickup_route_id, deleted_at, timestamps
 
@@ -324,6 +324,14 @@ la que dice su ruta. El `mensajero` que pide el contrato sale derivado
 (§3): dos mensajeros en la misma ruta lo dejarían ambiguo. Es nullable —un mensajero recién
 dado de alta puede no tener ruta— y en Postgres el índice único deja pasar varios NULL, así
 que puede haber varios sin asignar.
+
+**`couriers.maximum_volume` es lo que cabe en la furgoneta, en m³.** Añadido el
+13/08/2026, y lo usa el calendario de capacidades (§7, fase 6.D). Misma unidad y misma precisión —`decimal(8,3)`— que `volume_m3` de
+`run_packages` (§3) a propósito: contrastar lo que una ruta arrastró contra lo que su
+furgoneta admite tiene que ser una resta, no una conversión. Es nullable, y **nulo significa
+«no se sabe», no «no cabe nada»**, igual que el volumen del envío; por eso la validación
+exige `> 0` cuando se declara y deja el hueco vacío cuando no. El contrato de §3 no lo sirve: es
+un dato del panel, no del bot.
 
 **Las FK, y por qué cada una borra como borra.** `merchants.pickup_route_id` es
 `restrictOnDelete`:
@@ -1164,6 +1172,41 @@ Tests de pantalla como los del CRUD, y que fijen las obligaciones, no el maqueta
 - una retirada no sale en el listado por defecto;
 - renombrar la ruta después de guardar no cambia lo que muestra la incidencia;
 - la pantalla no dispara una consulta por fila.
+
+#### Calendario de capacidades (fase 6.D) — hecho el 13/08/2026
+
+`GET /capacity-calendar`, colgando de **Operaciones**. Una tabla por semana: una fila por UT,
+una columna por día y la media de la semana. La semana por defecto es la en curso, y el filtro
+va en la query (`?semana=`, el lunes) porque es un filtro con valor por defecto, no otra
+pantalla; se mueve con flechas o eligiendo cualquier día, que salta al lunes de su semana.
+
+Cuatro decisiones que no son de estilo:
+
+1. **Se agrupa por `assigned_courier_name`, no por la ruta.** La pregunta es por persona, y el
+   nombre copiado es quién conducía **aquel día** (§3.1). Ir por `assigned_route_id` hasta el
+   conductor de hoy reescribiría el pasado en cuanto alguien cambie de ruta.
+
+2. **Lo que se mide es la carga que le tocaba a su ruta**, no lo que acabó en su furgoneta. Un
+   paquete que pasó en la tanda de otra ruta sigue contando aquí para la suya: esto sirve para
+   planificar, y las desviaciones son el asunto de la pantalla de incidencias.
+
+3. **Toda suma dice sobre cuántos envíos se hizo**, la obligación de §3. Un día con la mitad de
+   los volúmenes nulos no es un día flojo, y sin el denominador al lado se lee como tal. Los
+   nulos no suman como cero por lo mismo.
+
+4. **Nada se esconde por no estar en el maestro.** Quien se dio de baja después de mover
+   volumen esa semana conserva su fila, marcada, y las rutas que aquel día no llevaba nadie van
+   a una fila «Sin UT asignada». Si no, la suma de la semana no cuadraría con la de incidencias
+   y nadie sabría por qué.
+
+La media es **por día con volumen conocido**, no entre siete: dividir entre la semana natural
+castigaría a quien libra el sábado. Un día sin corrida se marca como tal —no es un día sin
+trabajo— y uno con la corrida no fiable, también. La tabla entera se arma con **tres
+consultas** —corridas, agregado y maestro— y hay un test que lo fija: agrupar en SQL es lo que
+la mantiene en pie con el maestro entero delante.
+
+`couriers.maximum_volume` (§4) se enseña como columna y tiñe en rojo el día que se pasa. Es el
+único uso que hoy tiene ese campo.
 
 #### Orden de ataque
 

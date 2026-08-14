@@ -26,6 +26,7 @@
                 // estuviera, entrar en ella cerraría el grupo y apagaría el
                 // enlace desde el que acabas de llegar.
                 ['route' => 'incidents', 'label' => 'Incidencias', 'owns' => ['incidents', 'incident-run']],
+                ['route' => 'capacity-calendar', 'label' => 'Calendario de capacidades'],
             ],
         ],
     ];
@@ -81,8 +82,7 @@
 
             @foreach ($grupos as $grupo)
                 <x-ui.nav-group :label="$grupo['label']"
-                                :routes="collect($grupo['items'])->flatMap(fn ($i) => $i['owns'] ?? [$i['route']])->all()"
-                                class="mt-4">
+                                :routes="collect($grupo['items'])->flatMap(fn ($i) => $i['owns'] ?? [$i['route']])->all()">
                     <x-slot:icon>
                         <svg class="size-5" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" d="{{ $grupo['icon'] }}" />
@@ -98,30 +98,6 @@
             @endforeach
         </nav>
 
-        <div class="border-t border-white/10 p-3">
-            <div class="flex items-center gap-3 rounded-lg px-3 py-2">
-                <span class="grid size-8 shrink-0 place-items-center rounded-full bg-white/10 text-xs font-semibold text-white">
-                    {{ mb_strtoupper(mb_substr(auth()->user()->name, 0, 1)) }}
-                </span>
-                <div class="min-w-0 flex-1">
-                    <p class="truncate text-sm font-medium text-white">{{ auth()->user()->name }}</p>
-                    <p class="truncate text-xs text-slate-400">{{ auth()->user()->email }}</p>
-                </div>
-            </div>
-
-            <form method="POST" action="{{ route('logout') }}" class="mt-1">
-                @csrf
-                <button type="submit"
-                        class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-400
-                               transition hover:bg-white/5 hover:text-white">
-                    <svg class="size-5" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round"
-                              d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
-                    </svg>
-                    Salir
-                </button>
-            </form>
-        </div>
     </aside>
 
     <div class="lg:pl-64">
@@ -135,6 +111,63 @@
             </button>
 
             <p class="text-sm font-medium text-slate-500">{{ $seccion }}</p>
+
+            {{-- La cuenta, arriba a la derecha. Sale de la barra lateral a
+                 propósito: allí ocupaba sitio fijo para dos cosas que se usan
+                 una vez al día, y aquí el correo y el «Salir» sólo aparecen
+                 cuando se piden.
+
+                 Alpine y no Livewire: abrir un menú no tiene que ir al
+                 servidor. El estado no sobrevive a `wire:navigate`, y da igual:
+                 lo que se quiere al cambiar de pantalla es el menú cerrado. --}}
+            <div x-data="{ cuenta: false }" @keydown.escape.window="cuenta = false"
+                 class="relative ml-auto">
+                <button type="button" @click="cuenta = ! cuenta"
+                        x-bind:aria-expanded="cuenta ? 'true' : 'false'" aria-haspopup="true"
+                        class="flex items-center gap-2.5 rounded-lg py-1.5 pr-2 pl-1.5 transition hover:bg-slate-100">
+                    <span class="grid size-8 shrink-0 place-items-center rounded-full bg-shell-900 text-xs font-semibold text-white">
+                        {{ mb_strtoupper(mb_substr(auth()->user()->name, 0, 1)) }}
+                    </span>
+
+                    {{-- El nombre se cae en móvil: ahí la cabecera es estrecha
+                         y el avatar ya dice de quién es la sesión. --}}
+                    <span class="hidden max-w-40 truncate text-sm font-medium text-shell-900 sm:block">
+                        {{ auth()->user()->name }}
+                    </span>
+
+                    <svg class="size-4 shrink-0 text-slate-400 transition-transform duration-200"
+                         x-bind:class="cuenta && 'rotate-180'"
+                         fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                    </svg>
+                </button>
+
+                <div x-show="cuenta" x-cloak @click.outside="cuenta = false"
+                     x-transition.duration.150ms
+                     class="absolute right-0 z-20 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
+                    {{-- El correo es lo que distingue una cuenta de otra cuando
+                         dos personas comparten el mismo ordenador. --}}
+                    <div class="px-3 py-2">
+                        <p class="truncate text-sm font-medium text-shell-900">{{ auth()->user()->name }}</p>
+                        <p class="truncate text-xs text-slate-500">{{ auth()->user()->email }}</p>
+                    </div>
+
+                    <div class="my-1 border-t border-slate-100"></div>
+
+                    <form method="POST" action="{{ route('logout') }}">
+                        @csrf
+                        <button type="submit"
+                                class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-600
+                                       transition hover:bg-slate-100 hover:text-shell-900">
+                            <svg class="size-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                      d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
+                            </svg>
+                            Salir
+                        </button>
+                    </form>
+                </div>
+            </div>
         </header>
 
         <main class="px-4 py-8 lg:px-8">

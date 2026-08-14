@@ -112,7 +112,7 @@ new #[Layout('components.layouts.app')] class extends Component
 
 <div>
     <x-ui.page-header title="Comercios"
-                      description="El maestro que descarga el bot. Cada comercio pertenece a una ruta, y de ahí sale el mensajero que lo recoge.">
+                      description="El maestro que descarga el bot. Cada comercio pertenece a una ruta, y de ahí sale la UT que lo recoge.">
         <x-slot:actions>
             <x-ui.button wire:click="create">
                 <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
@@ -181,7 +181,7 @@ new #[Layout('components.layouts.app')] class extends Component
                             <th class="px-6 py-3 font-semibold">Comercio</th>
                             <th class="px-6 py-3 font-semibold">Código</th>
                             <th class="px-6 py-3 font-semibold">Ruta</th>
-                            <th class="px-6 py-3 font-semibold">Mensajero</th>
+                            <th class="px-6 py-3 font-semibold">UT</th>
                             <th class="px-6 py-3"><span class="sr-only">Acciones</span></th>
                         </tr>
                     </thead>
@@ -285,7 +285,7 @@ new #[Layout('components.layouts.app')] class extends Component
                 </x-ui.field>
 
                 <x-ui.field label="Ruta" for="pickup_route_id" :error="$errors->first('pickup_route_id')"
-                            hint="De aquí sale el mensajero que lo recoge.">
+                            hint="De aquí sale la UT que lo recoge.">
                     <x-ui.select wire:model="pickup_route_id" id="pickup_route_id"
                                  :invalid="$errors->has('pickup_route_id')">
                         <option value="">Elige una ruta</option>

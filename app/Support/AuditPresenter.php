@@ -26,7 +26,7 @@ class AuditPresenter
     /** @var array<string, string> */
     private const MODULOS = [
         PickupRoute::class => 'Rutas',
-        Courier::class => 'Mensajeros',
+        Courier::class => 'UT',
         Merchant::class => 'Comercios',
         User::class => 'Usuarios',
     ];
@@ -35,6 +35,7 @@ class AuditPresenter
     private const CAMPOS = [
         'name' => 'Nombre',
         'code' => 'Código',
+        'maximum_volume' => 'Volumen máximo (m³)',
         'pickup_route_id' => 'Ruta',
         'email' => 'Correo',
         'email_verified_at' => 'Correo verificado',

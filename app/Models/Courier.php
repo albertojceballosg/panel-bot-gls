@@ -14,7 +14,14 @@ class Courier extends Model
 {
     use Auditable, SoftDeletes;
 
-    protected $fillable = ['name', 'pickup_route_id'];
+    protected $fillable = ['name', 'pickup_route_id', 'maximum_volume'];
+
+    protected function casts(): array
+    {
+        // Nulo si nadie ha declarado la capacidad. No confundir con cero: ver
+        // la migración.
+        return ['maximum_volume' => 'float'];
+    }
 
     public function pickupRoute(): BelongsTo
     {
@@ -65,6 +72,13 @@ class Courier extends Model
                 Rule::exists('pickup_routes', 'id')->whereNull('deleted_at'),
                 Rule::unique('couriers', 'pickup_route_id')->ignore($id)->whereNull('deleted_at'),
             ],
+
+            // El volumen que admite la furgoneta, en m³. Nullable: puede no
+            // saberse. `gt:0` porque una furgoneta en la que no cabe nada no es
+            // un dato, es una errata; para «no lo sé» ya está el nulo. Los
+            // límites son los de la columna, `decimal(8,3)`: si se pasa de ahí,
+            // mejor un mensaje que un redondeo callado o un error de Postgres.
+            'maximum_volume' => ['nullable', 'numeric', 'gt:0', 'max:99999.999', 'decimal:0,3'],
         ];
     }
 }

@@ -87,7 +87,7 @@ new #[Layout('components.layouts.app')] class extends Component
             ),
             'modules' => [
                 PickupRoute::class => 'Rutas',
-                Courier::class => 'Mensajeros',
+                Courier::class => 'UT',
                 Merchant::class => 'Comercios',
                 User::class => 'Usuarios',
             ],

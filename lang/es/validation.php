@@ -14,12 +14,22 @@
 return [
 
     'boolean' => 'El campo :attribute tiene que ser sí o no.',
+    // :decimal se sustituye por el rango de la regla («0-3»), de ahí el «con».
+    'decimal' => 'El campo :attribute tiene que ser un número con :decimal decimales.',
     'email' => 'Eso no parece un correo válido.',
     'exists' => 'La opción elegida no existe.',
     'integer' => 'El campo :attribute tiene que ser un número entero.',
+    'numeric' => 'El campo :attribute tiene que ser un número.',
     'required' => 'El campo :attribute es obligatorio.',
     'string' => 'El campo :attribute tiene que ser texto.',
     'unique' => 'Ya existe un registro con ese :attribute.',
+
+    'gt' => [
+        'array' => 'El campo :attribute tiene que tener más de :value elementos.',
+        'file' => 'El campo :attribute tiene que ocupar más de :value kilobytes.',
+        'numeric' => 'El campo :attribute tiene que ser mayor que :value.',
+        'string' => 'El campo :attribute tiene que tener más de :value caracteres.',
+    ],
 
     'max' => [
         'array' => 'El campo :attribute no puede tener más de :max elementos.',
@@ -41,8 +51,9 @@ return [
     */
     'attributes' => [
         'code' => 'código',
-        'courier_id' => 'mensajero',
+        'courier_id' => 'UT',
         'email' => 'correo',
+        'maximum_volume' => 'volumen máximo',
         'name' => 'nombre',
         'password' => 'contraseña',
         'pickup_route_id' => 'ruta',

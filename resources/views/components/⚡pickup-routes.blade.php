@@ -113,7 +113,7 @@ new #[Layout('components.layouts.app')] class extends Component
                           d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z" />
                 </svg>
                 <x-ui.input wire:model.live.debounce.300ms="search" class="pl-9"
-                            placeholder="Buscar por ruta o mensajero…" aria-label="Buscar" />
+                            placeholder="Buscar por ruta o UT…" aria-label="Buscar" />
             </div>
 
             <label class="flex items-center gap-2 text-sm whitespace-nowrap text-slate-600">
@@ -126,8 +126,8 @@ new #[Layout('components.layouts.app')] class extends Component
         @if ($pickupRoutes->isEmpty())
             <x-ui.empty-state :title="$search !== '' ? 'Ninguna ruta coincide' : 'Todavía no hay rutas'"
                               :description="$search !== ''
-                                  ? 'Prueba con otro nombre de ruta o de mensajero.'
-                                  : 'Crea la primera para poder asignarle mensajero y comercios.'">
+                                  ? 'Prueba con otro nombre de ruta o de UT.'
+                                  : 'Crea la primera para poder asignarle UT y comercios.'">
                 <x-slot:actions>
                     @if ($search !== '')
                         <x-ui.button variant="secondary" wire:click="$set('search', '')">Quitar el filtro</x-ui.button>
@@ -143,7 +143,7 @@ new #[Layout('components.layouts.app')] class extends Component
                     <thead>
                         <tr class="border-b border-slate-200 text-left text-xs tracking-wider text-slate-500 uppercase">
                             <th class="px-6 py-3 font-semibold">Ruta</th>
-                            <th class="px-6 py-3 font-semibold">Mensajero</th>
+                            <th class="px-6 py-3 font-semibold">UT</th>
                             <th class="px-6 py-3 text-right font-semibold">Comercios</th>
                             <th class="px-6 py-3"><span class="sr-only">Acciones</span></th>
                         </tr>

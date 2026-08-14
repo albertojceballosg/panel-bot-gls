@@ -72,6 +72,56 @@ class CouriersCrudTest extends TestCase
         $this->assertSame(1, Courier::count());
     }
 
+    // --- Volumen máximo de la furgoneta (§4) ---------------------------------
+
+    public function test_it_stores_the_maximum_volume(): void
+    {
+        Livewire::test('couriers')
+            ->call('create')
+            ->set('name', 'Freddy GLS')
+            ->set('maximum_volume', '12.5')
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $this->assertSame(12.5, Courier::sole()->maximum_volume);
+    }
+
+    public function test_an_empty_volume_is_unknown_and_not_zero(): void
+    {
+        Livewire::test('couriers')
+            ->call('create')
+            ->set('name', 'Freddy GLS')
+            ->set('maximum_volume', '')
+            ->call('save')
+            ->assertHasNoErrors();
+
+        // Cero diría "no cabe nada"; lo que pasa es que no se sabe.
+        $this->assertNull(Courier::sole()->maximum_volume);
+    }
+
+    public function test_the_form_shows_the_volume_without_padding_zeros(): void
+    {
+        $courier = Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 12]);
+
+        Livewire::test('couriers')
+            ->call('edit', $courier->id)
+            ->assertSet('maximum_volume', '12');
+    }
+
+    public function test_it_rejects_a_volume_that_is_not_a_positive_number(): void
+    {
+        foreach (['0', '-3', 'grande', '1.2345'] as $valor) {
+            Livewire::test('couriers')
+                ->call('create')
+                ->set('name', "UT {$valor}")
+                ->set('maximum_volume', $valor)
+                ->call('save')
+                ->assertHasErrors('maximum_volume');
+        }
+
+        $this->assertSame(0, Courier::count());
+    }
+
     // --- Una ruta, un mensajero (§4) ----------------------------------------
 
     public function test_the_dropdown_only_offers_free_routes(): void
@@ -188,7 +238,7 @@ class CouriersCrudTest extends TestCase
         // baja» sería el fallo si no se distinguiera.
         Livewire::test('couriers')
             ->call('delete', $courier->id)
-            ->assertSee('Mensajero dado de baja');
+            ->assertSee('UT dada de baja');
     }
 
     // --- Confirmación de la baja ---------------------------------------------

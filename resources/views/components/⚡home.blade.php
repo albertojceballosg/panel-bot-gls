@@ -19,7 +19,7 @@ new #[Layout('components.layouts.app')] class extends Component
             'totales' => [
                 ['Comercios', Merchant::count(), 'Los que el bot cruza contra el portal'],
                 ['Rutas', PickupRoute::count(), 'Grupos por los que se reparten'],
-                ['Mensajeros', Courier::count(), 'Quién conduce cada una hoy'],
+                ['UT', Courier::count(), 'Quién conduce cada una hoy'],
             ],
         ];
     }

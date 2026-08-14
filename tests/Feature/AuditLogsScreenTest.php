@@ -74,7 +74,7 @@ class AuditLogsScreenTest extends TestCase
 
         // La clase sí aparece en el HTML, pero como `value` del desplegable de
         // filtro. Lo que no puede salir es en la columna que se lee.
-        $this->assertSame('Mensajeros', $entradas[0]['module']);
+        $this->assertSame('UT', $entradas[0]['module']);
         $this->assertSame('Freddy GLS', $entradas[0]['record']);
     }
 

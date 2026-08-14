@@ -29,6 +29,10 @@ Route::middleware('auth')->group(function () {
     // (`incident_runs.run_date` es único) y hace el enlace legible.
     Route::livewire('/incidents/{date}', 'incident-run')->name('incident-run');
 
+    // La semana va en la query (`?semana=`) y no en el path: es un filtro con
+    // valor por defecto —la semana en curso—, no otra pantalla.
+    Route::livewire('/capacity-calendar', 'capacity-calendar')->name('capacity-calendar');
+
     // POST y no GET: un enlace de salida se puede disparar desde fuera, o lo
     // precarga el navegador.
     Route::post('/logout', function (Request $request) {

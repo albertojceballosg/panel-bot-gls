@@ -224,7 +224,7 @@ new #[Layout('components.layouts.app')] class extends Component
          Va plegado y justo encima de las tablas que la usan: quien lea la
          pantalla a diario no necesita releerlo, y quien la abre por primera vez
          no debería tener que preguntar qué separa un «Firme» de un «No
-         concluyente» antes de llamar a un mensajero.
+         concluyente» antes de llamar a una UT.
 
          Los números salen de la propia corrida (`tolerance_minutes`,
          `batch_gap_minutes`), no escritos a mano: si el bot cambia sus umbrales,
@@ -279,7 +279,7 @@ new #[Layout('components.layouts.app')] class extends Component
 
             <p class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs">
                 <strong>No concluyente no significa que no pasara nada</strong>, significa que el bot no puede
-                decir quién fue. No sirve para hablar con un mensajero; sirve para mirar el día.
+                decir quién fue. No sirve para hablar con una UT; sirve para mirar el día.
             </p>
         </div>
     </x-ui.card>
@@ -311,7 +311,7 @@ new #[Layout('components.layouts.app')] class extends Component
                             <div class="min-w-0 flex-1">
                                 <p class="font-semibold text-shell-900">{{ $ruta['nombre'] }}</p>
                                 <p class="text-sm text-slate-500">
-                                    {{ $ruta['mensajero'] ?? 'Sin mensajero asignado' }}
+                                    {{ $ruta['mensajero'] ?? 'Sin UT asignada' }}
                                     @if ($ruta['correctos']->isNotEmpty())
                                         {{-- La proporción es el dato: 11 sobre 94 no
                                              es lo mismo que 11 sobre 12. --}}
@@ -522,7 +522,7 @@ new #[Layout('components.layouts.app')] class extends Component
                         ['Código de barras', $detalle->barcode ?? '—'],
                         ['Hora de cinta (UTC)', $detalle->belt_time ? $hora($detalle->belt_time) : 'Sin paso por la cinta'],
                         ['Ruta del comercio', $detalle->assigned_route_name ?? '—'],
-                        ['Mensajero aquel día', $detalle->assigned_courier_name ?? '—'],
+                        ['UT aquel día', $detalle->assigned_courier_name ?? '—'],
 
                         // Los dos últimos sólo tienen sentido en una incidencia:
                         // en un paquete correcto serían dos huecos que invitan a

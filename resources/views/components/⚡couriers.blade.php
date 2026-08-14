@@ -23,6 +23,9 @@ new #[Layout('components.layouts.app')] class extends Component
     /** Cadena y no int: un `<select>` devuelve texto, y '' es "sin ruta". */
     public string $pickup_route_id = '';
 
+    /** Capacidad de la furgoneta en m³. '' es "no se sabe", y en la base NULL. */
+    public string $maximum_volume = '';
+
     protected function model(): string
     {
         return Courier::class;
@@ -30,18 +33,29 @@ new #[Layout('components.layouts.app')] class extends Component
 
     protected function formFields(): array
     {
-        return ['name', 'pickup_route_id'];
+        return ['name', 'pickup_route_id', 'maximum_volume'];
     }
 
     protected function fillForm($record): void
     {
         $this->name = $record->name;
         $this->pickup_route_id = (string) ($record->pickup_route_id ?? '');
+
+        // Sin decimales de relleno: quien declaró «12» no debe encontrarse
+        // «12.000» al abrir la ficha.
+        $this->maximum_volume = $record->maximum_volume === null
+            ? ''
+            : rtrim(rtrim(number_format($record->maximum_volume, 3, '.', ''), '0'), '.');
     }
 
     protected function label(): string
     {
-        return 'mensajero';
+        return 'UT';
+    }
+
+    protected function feminine(): bool
+    {
+        return true;
     }
 
     public function with(): array
@@ -91,6 +105,9 @@ new #[Layout('components.layouts.app')] class extends Component
                 'name' => $this->name,
                 // '' significa "sin ruta asignada", y en la base es NULL.
                 'pickup_route_id' => $this->pickup_route_id === '' ? null : (int) $this->pickup_route_id,
+                // Y aquí '' significa "no se sabe la capacidad", que tampoco es
+                // cero: ver la migración.
+                'maximum_volume' => $this->maximum_volume === '' ? null : (float) $this->maximum_volume,
             ])
             ->save());
 
@@ -99,19 +116,19 @@ new #[Layout('components.layouts.app')] class extends Component
         }
 
         $this->cancel();
-        session()->flash('ok', $editando ? 'Mensajero actualizado.' : 'Mensajero creado.');
+        session()->flash('ok', $editando ? 'UT actualizada.' : 'UT creada.');
     }
 }; ?>
 
 <div>
-    <x-ui.page-header title="Mensajeros"
-                      description="Quién conduce cada ruta hoy. Dar de baja a un mensajero no toca la ruta ni sus comercios.">
+    <x-ui.page-header title="UT"
+                      description="Quién conduce cada ruta hoy. Dar de baja a una UT no toca la ruta ni sus comercios.">
         <x-slot:actions>
             <x-ui.button wire:click="create">
                 <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                 </svg>
-                Nuevo mensajero
+                Nueva UT
             </x-ui.button>
         </x-slot:actions>
     </x-ui.page-header>
@@ -133,7 +150,7 @@ new #[Layout('components.layouts.app')] class extends Component
                           d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z" />
                 </svg>
                 <x-ui.input wire:model.live.debounce.300ms="search" class="pl-9"
-                            placeholder="Buscar por mensajero o ruta…" aria-label="Buscar" />
+                            placeholder="Buscar por UT o ruta…" aria-label="Buscar" />
             </div>
 
             <label class="flex items-center gap-2 text-sm whitespace-nowrap text-slate-600">
@@ -144,15 +161,15 @@ new #[Layout('components.layouts.app')] class extends Component
         </div>
 
         @if ($couriers->isEmpty())
-            <x-ui.empty-state :title="$search !== '' ? 'Ningún mensajero coincide' : 'Todavía no hay mensajeros'"
+            <x-ui.empty-state :title="$search !== '' ? 'Ninguna UT coincide' : 'Todavía no hay UT'"
                               :description="$search !== ''
-                                  ? 'Prueba con otro nombre de mensajero o de ruta.'
-                                  : 'Da de alta al primero y asígnale una ruta.'">
+                                  ? 'Prueba con otro nombre de UT o de ruta.'
+                                  : 'Da de alta la primera y asígnale una ruta.'">
                 <x-slot:actions>
                     @if ($search !== '')
                         <x-ui.button variant="secondary" wire:click="$set('search', '')">Quitar el filtro</x-ui.button>
                     @else
-                        <x-ui.button wire:click="create">Nuevo mensajero</x-ui.button>
+                        <x-ui.button wire:click="create">Nueva UT</x-ui.button>
                     @endif
                 </x-slot:actions>
             </x-ui.empty-state>
@@ -161,14 +178,15 @@ new #[Layout('components.layouts.app')] class extends Component
                 <table class="w-full min-w-2xl text-sm">
                     <thead>
                         <tr class="border-b border-slate-200 text-left text-xs tracking-wider text-slate-500 uppercase">
-                            <th class="px-6 py-3 font-semibold">Mensajero</th>
+                            <th class="px-6 py-3 font-semibold">UT</th>
                             <th class="px-6 py-3 font-semibold">Ruta que conduce</th>
+                            <th class="px-6 py-3 text-right font-semibold">Volumen máximo</th>
                             <th class="px-6 py-3"><span class="sr-only">Acciones</span></th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
                         @foreach ($couriers as $courier)
-                            <tr wire:key="mensajero-{{ $courier->id }}" class="hover:bg-slate-50/75">
+                            <tr wire:key="ut-{{ $courier->id }}" class="hover:bg-slate-50/75">
                                 <td class="px-6 py-3">
                                     <span class="font-medium text-shell-900">{{ $courier->name }}</span>
 
@@ -186,6 +204,15 @@ new #[Layout('components.layouts.app')] class extends Component
                                         </span>
                                     @else
                                         <span class="text-slate-400">sin ruta asignada</span>
+                                    @endif
+                                </td>
+
+                                <td class="px-6 py-3 text-right tabular-nums">
+                                    @if ($courier->maximum_volume === null)
+                                        {{-- Nulo es "no se sabe", no cero: ver la migración. --}}
+                                        <span class="text-slate-400">sin declarar</span>
+                                    @else
+                                        {{ rtrim(rtrim(number_format($courier->maximum_volume, 3, ',', '.'), '0'), ',') }} m³
                                     @endif
                                 </td>
 
@@ -229,7 +256,7 @@ new #[Layout('components.layouts.app')] class extends Component
 
             <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-6 py-3">
                 <p class="text-sm text-slate-500">
-                    {{ $couriers->total() }} {{ $couriers->total() === 1 ? 'mensajero' : 'mensajeros' }}
+                    {{ $couriers->total() }} UT
                 </p>
 
                 {{ $couriers->links() }}
@@ -238,16 +265,16 @@ new #[Layout('components.layouts.app')] class extends Component
     </x-ui.card>
 
     @if ($showingForm)
-        <x-ui.modal :title="$editing ? 'Editar mensajero' : 'Nuevo mensajero'"
+        <x-ui.modal :title="$editing ? 'Editar UT' : 'Nueva UT'"
                     description="Puede quedarse sin ruta: la ruta existe aunque nadie la conduzca.">
-            <form wire:submit="save" id="form-mensajero" class="space-y-4">
+            <form wire:submit="save" id="form-ut" class="space-y-4">
                 <x-ui.field label="Nombre" for="name" :error="$errors->first('name')">
                     <x-ui.input wire:model="name" id="name" :invalid="$errors->has('name')" autofocus />
                 </x-ui.field>
 
                 <x-ui.field label="Ruta que conduce" for="pickup_route_id"
                             :error="$errors->first('pickup_route_id')"
-                            hint="Sólo aparecen las rutas sin conductor: una ruta la lleva un solo mensajero.">
+                            hint="Sólo aparecen las rutas sin conductor: una ruta la lleva una sola UT.">
                     <x-ui.select wire:model="pickup_route_id" id="pickup_route_id"
                                  :invalid="$errors->has('pickup_route_id')">
                         <option value="">Sin ruta asignada</option>
@@ -258,9 +285,17 @@ new #[Layout('components.layouts.app')] class extends Component
                     </x-ui.select>
                 </x-ui.field>
 
+                <x-ui.field label="Volumen máximo" for="maximum_volume"
+                            :error="$errors->first('maximum_volume')"
+                            hint="Lo que admite la furgoneta, en metros cúbicos. Déjalo vacío si no se sabe.">
+                    <x-ui.input wire:model="maximum_volume" id="maximum_volume" type="number"
+                                step="0.001" min="0.001" :invalid="$errors->has('maximum_volume')"
+                                placeholder="Sin declarar" />
+                </x-ui.field>
+
                 @if ($availableRoutes->isEmpty())
                     <p class="text-xs text-slate-500">
-                        Todas las rutas tienen ya un mensajero. Libera una quitándosela a quien la lleve.
+                        Todas las rutas tienen ya una UT. Libera una quitándosela a quien la lleve.
                     </p>
                 @endif
             </form>
@@ -270,7 +305,7 @@ new #[Layout('components.layouts.app')] class extends Component
                     Cancelar
                 </x-ui.button>
 
-                <x-ui.button type="submit" form="form-mensajero"
+                <x-ui.button type="submit" form="form-ut"
                              wire:loading.attr="disabled" wire:target="save">
                     <span wire:loading.remove wire:target="save">{{ $editing ? 'Guardar' : 'Crear' }}</span>
                     <span wire:loading wire:target="save">Guardando…</span>
@@ -280,10 +315,10 @@ new #[Layout('components.layouts.app')] class extends Component
     @endif
 
     @if ($confirmingDeletion && $objetivo = $this->deletionTarget())
-        <x-ui.confirm-modal title="Dar de baja al mensajero" :name="$objetivo->name"
+        <x-ui.confirm-modal title="Dar de baja la UT" :name="$objetivo->name"
                             confirm="delete({{ $confirmingDeletion }})">
-            Su ruta queda libre para otro mensajero, y ni la ruta ni sus comercios se tocan.
-            Podrás reactivarlo cuando quieras.
+            Su ruta queda libre para otra UT, y ni la ruta ni sus comercios se tocan.
+            Podrás reactivarla cuando quieras.
         </x-ui.confirm-modal>
     @endif
 
