@@ -120,7 +120,8 @@ class PickupRoutesCrudTest extends TestCase
         // lo renderizado, que es lo que ve quien usa el panel.
         Livewire::test('pickup-routes')
             ->call('delete', $pickupRoute->id)
-            ->assertSee('todavía tiene 1 comercio.');
+            ->assertDispatched('toast', fn ($nombre, $params) => $params['type'] === 'error'
+                && str_contains($params['message'], 'todavía tiene 1 comercio.'));
 
         $this->assertNotSoftDeleted($pickupRoute);
     }
@@ -133,8 +134,8 @@ class PickupRoutesCrudTest extends TestCase
 
         Livewire::test('pickup-routes')
             ->call('delete', $pickupRoute->id)
-            ->assertSee('todavía tiene 2 comercios')
-            ->assertSee('Muévelos');
+            ->assertDispatched('toast', fn ($nombre, $params) => str_contains($params['message'], 'todavía tiene 2 comercios')
+                && str_contains($params['message'], 'Muévelos'));
     }
 
     public function test_an_empty_route_can_be_deleted_and_brought_back(): void

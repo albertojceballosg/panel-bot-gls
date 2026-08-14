@@ -1,0 +1,165 @@
+<?php
+
+use App\Models\Setting;
+use App\Support\SendsToasts;
+use App\Support\SettingsCatalog;
+use Livewire\Attributes\Layout;
+use Livewire\Component;
+
+/**
+ * Configuraciones de un módulo (CONTEXTO.md §7, fase 11).
+ *
+ * **Una sola pantalla para todos los módulos**, y no una por cada uno: lo que
+ * cambia entre ellos son los parámetros, y eso ya está declarado en
+ * `SettingsCatalog`. Añadir la configuración de otra pantalla es una entrada en
+ * el catálogo — ni ruta, ni componente, ni migración.
+ *
+ * Los valores viven en `$values`, un mapa clave → texto. Texto también para los
+ * porcentajes: un `<input>` devuelve cadenas, y convertir en el borde en vez de
+ * por dentro evita que un campo vacío se lea como un cero.
+ *
+ * **Nada nace con un valor por defecto**: un módulo sin configurar enseña el
+ * formulario en blanco y avisa en su propia pantalla. Ver `Setting::missing()`.
+ */
+new #[Layout('components.layouts.app')] class extends Component
+{
+    use SendsToasts;
+
+    public string $module = '';
+
+    /** @var array<string, string> */
+    public array $values = [];
+
+    public function mount(string $module): void
+    {
+        abort_unless(SettingsCatalog::has($module), 404);
+
+        $this->module = $module;
+        $this->values = Setting::for($module);
+    }
+
+    public function save(): void
+    {
+        $this->validate(
+            SettingsCatalog::rules($this->module, 'values.'),
+            attributes: SettingsCatalog::labels($this->module, 'values.'),
+        );
+
+        Setting::store($this->module, $this->values);
+
+        $this->toast('Configuración guardada.');
+    }
+
+    /** @return array<string, mixed> */
+    public function with(): array
+    {
+        return ['definicion' => SettingsCatalog::module($this->module)];
+    }
+}; ?>
+
+<div>
+    <x-ui.page-header :title="'Configuración · '.$definicion['label']"
+                      :description="$definicion['description'] ?? ''" />
+
+    <form wire:submit="save" class="space-y-4">
+        @php
+            $porcentajes = collect($definicion['fields'])->where('type', \App\Support\SettingsCatalog::TYPE_PERCENT);
+            $colores = collect($definicion['fields'])->where('type', \App\Support\SettingsCatalog::TYPE_COLOR);
+        @endphp
+
+        @if ($porcentajes->isNotEmpty())
+            <x-ui.card>
+                <h2 class="text-sm font-semibold text-shell-900">Umbrales</h2>
+                <p class="mt-0.5 text-sm text-slate-500">
+                    En porcentaje del volumen esperado. Parten el día en tres tramos: malo, justo y bueno.
+                </p>
+
+                <div class="mt-4 grid gap-4 sm:grid-cols-2">
+                    @foreach ($porcentajes as $key => $campo)
+                        <x-ui.field :label="$campo['label']" :for="$key" :hint="$campo['hint'] ?? null"
+                                    :error="$errors->first('values.'.$key)">
+                            {{-- El `%` dentro del campo y no en la etiqueta: así
+                                 se ve al leer el número, que es cuando importa. --}}
+                            <div class="relative">
+                                <x-ui.input wire:model.live.debounce.400ms="values.{{ $key }}" :id="$key"
+                                            type="number" min="1" max="100" step="1" class="pr-8"
+                                            :invalid="$errors->has('values.'.$key)" />
+                                <span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-slate-400">
+                                    %
+                                </span>
+                            </div>
+                        </x-ui.field>
+                    @endforeach
+                </div>
+            </x-ui.card>
+        @endif
+
+        @if ($colores->isNotEmpty())
+            <x-ui.card>
+                <h2 class="text-sm font-semibold text-shell-900">Colores</h2>
+                <p class="mt-0.5 text-sm text-slate-500">
+                    De qué color se pinta la cifra según el tramo en el que caiga.
+                </p>
+
+                <div class="mt-4 grid gap-4 sm:grid-cols-3">
+                    @foreach ($colores as $key => $campo)
+                        <x-ui.field :label="$campo['label']" :for="$key" :hint="$campo['hint'] ?? null"
+                                    :error="$errors->first('values.'.$key)">
+                            {{-- El selector y el hexadecimal, atados a la misma
+                                 propiedad: se elige con el ratón o se pega el
+                                 color corporativo, que es como llegan de verdad. --}}
+                            <div class="flex items-center gap-2">
+                                <input type="color" wire:model.live="values.{{ $key }}" :id="$key"
+                                       aria-label="{{ $campo['label'] }}"
+                                       class="size-9 shrink-0 cursor-pointer rounded-lg border border-slate-300 bg-white p-1">
+
+                                <x-ui.input wire:model.live.debounce.400ms="values.{{ $key }}"
+                                            class="font-mono uppercase" maxlength="7"
+                                            :invalid="$errors->has('values.'.$key)" />
+                            </div>
+                        </x-ui.field>
+                    @endforeach
+                </div>
+
+                {{-- La prueba de que lo elegido se lee. Un verde y un ámbar que
+                     sobre blanco no se distinguen sólo se ven aquí. --}}
+                <div class="mt-5 border-t border-slate-100 pt-4">
+                    <p class="text-xs font-medium tracking-wide text-slate-500 uppercase">Cómo se verá</p>
+
+                    <div class="mt-2 flex flex-wrap gap-6">
+                        @foreach ([
+                            ['bad_color', 'minimum_percent', 'Por debajo del mínimo', -15],
+                            ['warning_color', 'minimum_percent', 'Entre el mínimo y el óptimo', 5],
+                            ['good_color', 'optimal_percent', 'Del óptimo para arriba', 8],
+                        ] as [$color, $umbral, $texto, $desvio])
+                            @php
+                                // Sin umbral no hay cifra que enseñar: un «0 %»
+                                // con el color puesto haría creer que ya está
+                                // configurado.
+                                $hayUmbral = ($values[$umbral] ?? '') !== '';
+                                $muestra = $hayUmbral
+                                    ? max(0, min(150, (int) $values[$umbral] + $desvio)).' %'
+                                    : '—';
+                            @endphp
+
+                            <div>
+                                <p class="text-xl font-semibold tabular-nums"
+                                   @style(['color: '.$values[$color] => preg_match('/^#[0-9a-fA-F]{6}$/', $values[$color] ?? '')])>
+                                    {{ $muestra }}
+                                </p>
+                                <p class="text-xs text-slate-500">{{ $texto }}</p>
+                            </div>
+                        @endforeach
+                    </div>
+                </div>
+            </x-ui.card>
+        @endif
+
+        <div class="flex justify-end">
+            <x-ui.button type="submit" wire:loading.attr="disabled" wire:target="save">
+                <span wire:loading.remove wire:target="save">Guardar</span>
+                <span wire:loading wire:target="save">Guardando…</span>
+            </x-ui.button>
+        </div>
+    </form>
+</div>

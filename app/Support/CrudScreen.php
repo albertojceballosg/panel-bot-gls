@@ -20,7 +20,7 @@ use RuntimeException;
  */
 trait CrudScreen
 {
-    use PreventsDoubleSubmit, WithPagination;
+    use PreventsDoubleSubmit, SendsToasts, WithPagination;
 
     public ?int $editing = null;
 
@@ -194,8 +194,9 @@ trait CrudScreen
         } catch (RuntimeException $e) {
             // Un modelo que se niega por una regla de negocio: `PickupRoute` no
             // se deja dar de baja con comercios vivos (§4). Mejor un aviso
-            // legible que una excepción en pantalla.
-            session()->flash('error', $e->getMessage());
+            // legible que una excepción en pantalla. Va como toast de error,
+            // que no se cierra solo: explica qué hacer antes de reintentarlo.
+            $this->toastError($e->getMessage());
 
             return false;
         }
@@ -204,7 +205,7 @@ trait CrudScreen
     /** «Ruta dada de baja», «Mensajero dado de baja». */
     protected function flashDone(string $femenino, string $masculino): void
     {
-        session()->flash('ok', sprintf(
+        $this->toast(sprintf(
             '%s %s.',
             ucfirst($this->label()),
             $this->feminine() ? $femenino : $masculino,

@@ -3,6 +3,7 @@
 use App\Models\RunPackage;
 use App\Models\IncidentRun;
 use App\Support\IncidentPresenter;
+use App\Support\SendsToasts;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -37,6 +38,8 @@ use Livewire\Component;
  */
 new #[Layout('components.layouts.app')] class extends Component
 {
+    use SendsToasts;
+
     public IncidentRun $run;
 
     /** El paquete abierto en el diálogo de detalle, si hay alguno. */
@@ -124,7 +127,7 @@ new #[Layout('components.layouts.app')] class extends Component
         $paquete->save();
 
         $this->cancelManagement();
-        session()->flash('ok', 'Incidencia actualizada.');
+        $this->toast('Incidencia actualizada.');
     }
 
     /** @return array<string, mixed> */
@@ -234,10 +237,6 @@ new #[Layout('components.layouts.app')] class extends Component
 
     <x-ui.page-header :title="$run->run_date->translatedFormat('j \d\e F \d\e Y')"
                       description="Paquetes que no pasaron por la cinta con el grueso de su ruta. Horas en UTC, las mismas que muestra GLS Atlas." />
-
-    @if (session('ok'))
-        <x-ui.alert type="success" class="mb-4">{{ session('ok') }}</x-ui.alert>
-    @endif
 
     {{-- Obligación 2: una jornada dudosa no cubre todos los envíos del día, y
          leerla como completa lleva a concluir «no hubo más incidencias» cuando

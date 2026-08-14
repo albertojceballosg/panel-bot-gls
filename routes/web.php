@@ -34,6 +34,16 @@ Route::middleware('auth')->group(function () {
     // valor por defecto —la semana en curso—, no otra pantalla.
     Route::livewire('/capacity-calendar', 'capacity-calendar')->name('capacity-calendar');
 
+    // La cuenta de uno mismo. Fuera de la barra lateral a propósito: se llega
+    // desde el menú de la cabecera, que es donde se busca «mi cuenta».
+    Route::livewire('/profile', 'profile')->name('profile');
+
+    // Configuraciones: los parámetros con los que trabajan otras pantallas.
+    // El módulo va en el path y no en la query porque cada uno es una pantalla
+    // distinta, no un filtro sobre la misma; los válidos los decide
+    // `SettingsCatalog`, y el resto es un 404.
+    Route::livewire('/settings/{module}', 'settings')->name('settings');
+
     // Sistema: mantenimiento del panel, no del maestro.
     Route::livewire('/users', 'users')->name('users');
     Route::livewire('/backups', 'backups')->name('backups');

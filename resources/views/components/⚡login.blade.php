@@ -119,10 +119,6 @@ new #[Layout('components.layouts.guest')] class extends Component
 
     {{-- Lo que trae quien llega expulsado: hoy, la restauración de una copia,
          que se lleva por delante la sesión (§7, fase 7). --}}
-    @if (session('ok'))
-        <x-ui.alert type="success" class="mb-4">{{ session('ok') }}</x-ui.alert>
-    @endif
-
     <x-ui.card>
         <form wire:submit="login" class="space-y-4">
             <x-ui.field label="Correo" for="email" :error="$errors->first('email')">

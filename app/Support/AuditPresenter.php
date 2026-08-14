@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\Courier;
 use App\Models\Merchant;
 use App\Models\PickupRoute;
+use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -29,6 +30,7 @@ class AuditPresenter
         Courier::class => 'UT',
         Merchant::class => 'Comercios',
         User::class => 'Usuarios',
+        Setting::class => 'Configuraciones',
     ];
 
     /** @var array<string, string> */
@@ -40,6 +42,11 @@ class AuditPresenter
         'pickup_route_id' => 'Ruta',
         'email' => 'Correo',
         'email_verified_at' => 'Correo verificado',
+        // De `settings`: la fila ya dice qué parámetro es en su nombre, así que
+        // la columna sólo tiene que decir qué valor tomó.
+        'value' => 'Valor',
+        'module' => 'Módulo',
+        'key' => 'Parámetro',
     ];
 
     private function __construct(private Collection $rutas) {}

@@ -116,7 +116,7 @@ new #[Layout('components.layouts.app')] class extends Component
         }
 
         $this->cancel();
-        session()->flash('ok', $editando ? 'UT actualizada.' : 'UT creada.');
+        $this->toast($editando ? 'UT actualizada.' : 'UT creada.');
     }
 }; ?>
 
@@ -132,14 +132,6 @@ new #[Layout('components.layouts.app')] class extends Component
             </x-ui.button>
         </x-slot:actions>
     </x-ui.page-header>
-
-    @if (session('ok'))
-        <x-ui.alert type="success" class="mb-4">{{ session('ok') }}</x-ui.alert>
-    @endif
-
-    @if (session('error'))
-        <x-ui.alert type="error" class="mb-4">{{ session('error') }}</x-ui.alert>
-    @endif
 
     <x-ui.card padding="p-0">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-3">

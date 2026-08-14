@@ -6,6 +6,11 @@
     $estilos = [
         'success' => ['bg-emerald-50 text-emerald-800 ring-emerald-200', 'M4.5 12.75l6 6 9-13.5'],
         'error' => ['bg-red-50 text-red-800 ring-red-200', 'M12 9v3.75m0 3.75h.01M10.34 3.94l-7.6 13.17A1.5 1.5 0 004.04 19.5h15.92a1.5 1.5 0 001.3-2.39l-7.6-13.17a1.5 1.5 0 00-2.6 0z'],
+
+        // Ni éxito ni fallo: algo que hay que atender. Lo estrena el aviso de
+        // «esto está sin configurar» (§7, fase 11), donde el rojo diría que
+        // algo se ha roto y no es verdad.
+        'warning' => ['bg-amber-50 text-amber-800 ring-amber-200', 'M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z'],
     ];
 
     [$clases, $icono] = $estilos[$type] ?? $estilos['success'];

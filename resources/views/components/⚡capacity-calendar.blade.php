@@ -2,6 +2,7 @@
 
 use App\Models\Courier;
 use App\Models\IncidentRun;
+use App\Models\Setting;
 use App\Models\RunPackage;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -189,6 +190,12 @@ new #[Layout('components.layouts.app')] class extends Component
             : [];
 
         return [
+            // Los parámetros que esta pantalla necesita y nadie ha puesto
+            // todavía (§7, fase 11). No hay valores por defecto a propósito:
+            // inventarle un umbral al cliente cambiaría cómo se lee la tabla sin
+            // que él lo haya elegido, así que se pide y punto.
+            'faltanAjustes' => Setting::missing('capacity-calendar'),
+
             'lunes' => $lunes,
             'domingo' => $domingo,
             'dias' => $dias,
@@ -220,6 +227,18 @@ new #[Layout('components.layouts.app')] class extends Component
             @endunless
         </x-slot:actions>
     </x-ui.page-header>
+
+    @if ($faltanAjustes)
+        <x-ui.alert type="warning" class="mb-4">
+            <span>
+                <strong>Esta pantalla está sin configurar.</strong>
+                Falta{{ count($faltanAjustes) === 1 ? '' : 'n' }} por definir
+                {{ collect($faltanAjustes)->map(fn ($n) => mb_strtolower($n))->join(', ', ' y ') }}.
+                <a href="{{ route('settings', ['module' => 'capacity-calendar']) }}" wire:navigate
+                   class="font-semibold underline underline-offset-2">Configurarla ahora</a>.
+            </span>
+        </x-ui.alert>
+    @endif
 
     <x-ui.card padding="p-0">
         {{-- El selector de semana. Las flechas son lo que se usa a diario

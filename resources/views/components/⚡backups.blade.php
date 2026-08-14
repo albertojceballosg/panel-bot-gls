@@ -1,6 +1,7 @@
 <?php
 
 use App\Support\DatabaseBackup;
+use App\Support\SendsToasts;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 use Livewire\WithFileUploads;
@@ -25,7 +26,7 @@ use Livewire\WithFileUploads;
  */
 new #[Layout('components.layouts.app')] class extends Component
 {
-    use WithFileUploads;
+    use SendsToasts, WithFileUploads;
 
     /** Lo que hay que escribir para restaurar. */
     public const CONFIRMATION = 'RESTAURAR';
@@ -86,7 +87,7 @@ new #[Layout('components.layouts.app')] class extends Component
         try {
             $this->backups()->restore($this->upload->getRealPath());
         } catch (\RuntimeException $e) {
-            session()->flash('error', $e->getMessage());
+            $this->toastError($e->getMessage());
             $this->cancel();
 
             return null;
@@ -113,10 +114,6 @@ new #[Layout('components.layouts.app')] class extends Component
 <div>
     <x-ui.page-header title="Copias de seguridad"
                       description="Un volcado de la base entera, con pg_dump. Se descarga en el momento; el panel no guarda ninguno." />
-
-    @if (session('error'))
-        <x-ui.alert type="error" class="mb-4">{{ session('error') }}</x-ui.alert>
-    @endif
 
     {{-- Si el contenedor no trae las herramientas, la pantalla no puede hacer
          nada: mejor decirlo entero que dejar que fallen los botones uno a uno. --}}

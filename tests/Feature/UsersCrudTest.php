@@ -283,7 +283,8 @@ class UsersCrudTest extends TestCase
     {
         Livewire::test('users')
             ->call('delete', $this->yo->id)
-            ->assertSee('No puedes darte de baja a ti mismo.');
+            ->assertDispatched('toast', type: 'error',
+                message: 'No puedes darte de baja a ti mismo. Que lo haga otro usuario.');
 
         $this->assertNotSoftDeleted($this->yo);
     }
@@ -300,7 +301,8 @@ class UsersCrudTest extends TestCase
         // es la de quien está mirando, y la suya no se puede dar de baja.
         Livewire::test('users')
             ->call('delete', $this->yo->id)
-            ->assertSee('No puedes darte de baja a ti mismo.');
+            ->assertDispatched('toast', type: 'error',
+                message: 'No puedes darte de baja a ti mismo. Que lo haga otro usuario.');
 
         $this->assertSame(1, User::count());
     }

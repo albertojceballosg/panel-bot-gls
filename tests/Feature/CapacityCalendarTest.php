@@ -6,6 +6,7 @@ use App\Models\Courier;
 use App\Models\IncidentRun;
 use App\Models\PickupRoute;
 use App\Models\RunPackage;
+use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -298,6 +299,34 @@ class CapacityCalendarTest extends TestCase
         Livewire::test('capacity-calendar')->assertSee('no fiable');
     }
 
+    public function test_it_asks_to_be_configured_while_its_settings_are_missing(): void
+    {
+        Courier::create(['name' => 'Freddy GLS']);
+
+        // No hay valores por defecto (§7, fase 11): inventarle un umbral al
+        // cliente cambiaría cómo se lee la tabla sin que él lo haya elegido.
+        Livewire::test('capacity-calendar')
+            ->assertSee('Esta pantalla está sin configurar')
+            ->assertSee('porcentaje mínimo');
+    }
+
+    public function test_once_configured_it_stops_asking(): void
+    {
+        Courier::create(['name' => 'Freddy GLS']);
+
+        foreach ([
+            'minimum_percent' => '60',
+            'optimal_percent' => '85',
+            'bad_color' => '#dc2626',
+            'warning_color' => '#d97706',
+            'good_color' => '#16a34a',
+        ] as $clave => $valor) {
+            Setting::create(['module' => 'capacity-calendar', 'key' => $clave, 'value' => $valor]);
+        }
+
+        Livewire::test('capacity-calendar')->assertDontSee('Esta pantalla está sin configurar');
+    }
+
     public function test_the_screen_survives_an_empty_master(): void
     {
         Livewire::test('capacity-calendar')
@@ -330,8 +359,9 @@ class CapacityCalendarTest extends TestCase
 
         Livewire::test('capacity-calendar');
 
-        // Corridas, agregado y maestro. Tres, y las mismas tres con 5 UT que
-        // con 50: la tabla se arma en SQL, no fila a fila.
-        $this->assertSame(3, $consultas);
+        // Corridas, agregado, maestro y la configuración de la pantalla (§7,
+        // fase 11). Cuatro, y las mismas cuatro con 5 UT que con 50: la tabla se
+        // arma en SQL, no fila a fila.
+        $this->assertSame(4, $consultas);
     }
 }

@@ -15,6 +15,9 @@ return [
 
     'boolean' => 'El campo :attribute tiene que ser sí o no.',
     'confirmed' => 'El campo :attribute y su repetición no coinciden.',
+    // Sin :attribute: la usa el perfil para autorizar el cambio de contraseña,
+    // y ahí lo que falla es la que se ha escrito, no «el campo».
+    'current_password' => 'La contraseña actual no es correcta.',
     // :decimal se sustituye por el rango de la regla («0-3»), de ahí el «con».
     'decimal' => 'El campo :attribute tiene que ser un número con :decimal decimales.',
     'email' => 'Eso no parece un correo válido.',
@@ -56,6 +59,7 @@ return [
     'attributes' => [
         'code' => 'código',
         'courier_id' => 'UT',
+        'current_password' => 'contraseña actual',
         'email' => 'correo',
         'last_name' => 'apellido',
         'maximum_volume' => 'volumen máximo',

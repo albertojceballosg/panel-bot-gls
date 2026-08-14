@@ -1387,6 +1387,125 @@ El id del paquete llega del cliente, así que se busca **dentro de la jornada** 
 ->findOrFail()`) y no con un `find` suelto; hay un test que lo comprueba con el paquete de otro
 día. Primitiva nueva: `ui/textarea`, gemela de `ui/input`.
 
+### Fase 10 — Mi perfil. Hecha el 14/08/2026
+
+`GET /profile`, **fuera de la barra lateral**: se llega desde el menú de la cabecera, que es
+donde se busca «mi cuenta». No es un módulo del maestro y ponerlo en la lista de la izquierda lo
+habría convertido en uno.
+
+Siempre opera sobre `auth()->user()`, **nunca sobre un id que llegue del cliente**. Sin eso
+sería `/users` con otro nombre y con menos comprobaciones.
+
+1. **El correo no se cambia aquí**, por decisión del 14/08/2026. Es la credencial de acceso:
+   quien lo toca se está cambiando el usuario con el que entra, y eso pasa por el maestro de
+   cuentas para que quede como lo que es, un cambio administrativo. Se enseña deshabilitado
+   —saber con qué correo has entrado sí es asunto de tu perfil— y el componente **no tiene
+   propiedad `email`**, así que no es que el formulario lo esconda: es que no hay dónde
+   recibirlo. Hay un test que lo comprueba con `property_exists`.
+   **Ojo con la letra pequeña**: hoy todos los usuarios ven `/users`, así que cualquiera puede
+   cambiarse el correo por ahí. La restricción del perfil es de diseño de la pantalla, no un
+   permiso. El día que haya roles, esto se convierte en uno.
+
+2. **Dos formularios y no uno.** Cambiar el nombre y cambiar la contraseña son gestos distintos
+   con distinto riesgo: juntarlos obligaría a escribir la contraseña para corregir una tilde.
+
+3. **La contraseña actual se pide aunque la sesión esté abierta.** Un portátil desatendido
+   basta para quedarse con la cuenta, y ese es justo el descuido contra el que sirve. Se usa la
+   regla `current_password` de Laravel, que comprueba contra el hash del usuario autenticado:
+   nada de `Hash::check` a mano. La nueva no puede ser la de antes (`Rule::notIn`).
+
+Los cambios quedan en el historial porque `User` es `Auditable` (§4), y la contraseña no llega a
+él —`#[Hidden]`—; hay un test que lo recorre entero buscándola. `lang/es/validation.php` gana
+`current_password`. De paso, **el menú de la cabecera pasa a saludar con `fullName()`**, que
+desde la fase 8 incluye el apellido.
+
+**Avisos flotantes (`ui/toasts`), estrenados aquí y extendidos a todo el panel el mismo día.**
+Al estilo de los *toasts* de TailAdmin y, como todo el lenguaje visual, copiando el aire y sin
+instalar nada (§5). El contenedor vive una sola vez en cada layout —el de sesión y el de
+invitado— y escucha en `window`; cualquier pantalla lanza uno con `$this->toast('…')` del trait
+`SendsToasts`, que envuelve `$this->dispatch('toast', …)`: Livewire v3 publica sus `dispatch`
+como eventos del navegador, así que basta Alpine para recogerlos y ninguna plantilla necesita un
+hueco donde pintarlos.
+
+**Todos los `session()->flash('ok'|'error')` del panel pasaron a toast** el 14/08/2026, y con
+ellos desaparecieron los bloques `@if (session('ok'))` de las seis pantallas que los repetían.
+Tres cosas que la conversión decide:
+
+1. **El éxito se va solo a los cinco segundos; el error se queda hasta que lo cierras.** Un
+   error dice por qué **no** se hizo lo que pediste —«la ruta todavía tiene 3 comercios»— y eso
+   no puede evaporarse mientras miras a otro lado.
+
+2. **El aviso va teñido del color de lo que dice**, no blanco con un filo de color: en la
+   esquina de una pantalla llena de tarjetas blancas, un borde de un píxel no se ve. Se cambió
+   el 14/08/2026 después de verlo en marcha.
+
+3. **Lo que cruza una redirección sigue viajando en la sesión** —la restauración de una copia,
+   que se lleva por delante la sesión y aterriza en el login—, porque ahí no hay evento de
+   Livewire que valga. El contenedor lee `session('ok'|'error')` en su `x-init` y los enseña
+   igual que a los demás; por eso está también en el layout de invitado.
+
+**Los `x-ui.alert` que quedan son estado, no aviso**: «esta corrida no es fiable», «faltan
+`pg_dump` y `pg_restore` en el contenedor», la advertencia de que restaurar no se deshace. Eso
+es parte de lo que la pantalla dice mientras está abierta y no puede desaparecer solo.
+
+### Fase 11 — Configuraciones. Hecha el 14/08/2026
+
+`GET /settings/{module}`, en un bloque **Configuraciones** de la barra lateral con un hijo por
+módulo configurable. Son los parámetros con los que trabaja otra pantalla: umbrales, colores y
+lo que venga. Hoy sólo está el **calendario de capacidades**, y **todavía no lo lee nadie**: la
+fase entrega la configuración, no el efecto. Conectarlo es el pendiente de §8.
+
+La pantalla de configuración lo avisaba con un `x-ui.alert`, retirado el mismo día a petición;
+con él se fue el soporte de `pending` en el catálogo. **El aviso que sí hay vive en el módulo
+configurado**, no en la configuración: el calendario dice «esta pantalla está sin configurar»,
+enumera lo que falta por su nombre visible y enlaza a su ajuste.
+
+**Una tabla `settings` con una fila por parámetro** (`module`, `key`, `value`), y no una tabla
+por módulo ni un `jsonb` por módulo. Las tres se pensaron:
+
+- Columnas tipadas por módulo es lo que hace el resto del esquema (§4), y sería lo coherente si
+  esto fuera negocio. No lo es: son ajustes de pantalla, y cada umbral nuevo costaría una
+  migración.
+- Un `jsonb` por módulo deja el historial ilegible: `audit_logs` enseñaría un volcado entero
+  donde cambió un número, y la pantalla de auditoría vive de decir «Campo / Antes / Después».
+- Fila por parámetro: el historial sale bien —una entrada por parámetro que cambió, y sólo por
+  los que cambiaron— y añadir uno es una línea de catálogo.
+
+**El catálogo (`SettingsCatalog`) es la única fuente**: la pantalla pinta lo que declara y la
+validación sale de ahí. **Una sola pantalla sirve a todos los módulos** —lo que cambia entre
+ellos son los parámetros, y eso ya está declarado—, así que añadir la configuración de otro
+módulo no lleva ruta, ni componente, ni migración.
+
+**No hay valores por defecto**, decidido el 14/08/2026 después de probarlos. Los hubo unas
+horas, en el catálogo, y se quitaron por lo que implicaban: un umbral inventado cambia cómo se
+lee una pantalla entera sin que el cliente lo haya elegido y sin que nada lo avise, que es
+peor que el hueco. Ahora un parámetro sin poner **es** un hueco, `Setting::missing()` los
+enumera y **el módulo que los necesita avisa en su propia pantalla** con enlace a su ajuste.
+Con los defectos se fue también el botón «Valores por defecto», que ya no tenía qué restaurar.
+
+Del calendario se configuran hoy dos umbrales y tres colores. **Tres y no dos**: dos umbrales
+parten el día en tres tramos —por debajo del mínimo, entre mínimo y óptimo, del óptimo para
+arriba—, y con dos colores el tramo de en medio se queda sin definir. La pantalla enseña una
+muestra de cómo se verá cada uno, porque un verde y un ámbar que sobre blanco no se distinguen
+sólo se ven al lado.
+
+Dos cosas que no son de estilo:
+
+1. **El hexadecimal se valida con `regex`** aunque el `<input type="color">` siempre mande
+   `#rrggbb`: al lado hay un campo de texto para pegar el color corporativo, y ese valor acaba
+   en un atributo `style`. Hay un test que lo intenta con `javascript:alert(1)`.
+2. **`Setting` es `Auditable` pero no usa `SoftDeletes`** —un parámetro no se da de baja: se
+   cambia, y borrar su fila lo devuelve a su valor por defecto—. Eso destapó que `Auditable`
+   **daba por hecho el borrado pasivo**: registraba `restored`, que aporta `SoftDeletes`, y en
+   un modelo sin él reventaba durante el arranque con un error que no mencionaba ni la
+   auditoría ni el evento. Arreglado en el trait, que es donde estaba el supuesto.
+
+`ui/alert` estrena el tipo `warning` —ni éxito ni fallo: algo que atender, donde el rojo diría
+que se ha roto algo y no es verdad—. `AuditPresenter` aprende el módulo «Configuraciones»; el nombre de cada fila lo da un accesor
+`Setting::name` —«Calendario de capacidades · Porcentaje mínimo»— porque, sin él, el historial
+diría «#7». `ui/nav-sublink` aprende a llevar parámetros de ruta y a marcarse activo sólo con
+los suyos: si no, todas las configuraciones se encenderían a la vez.
+
 ## 8. Pendientes y decisiones abiertas
 
 - [x] **Cerrar con el repo del bot el cambio de `ruta` a texto** (§3). Acordado el
@@ -1400,6 +1519,12 @@ día. Primitiva nueva: `ui/textarea`, gemela de `ui/input`.
       «atendida», ver §7 fase 9. Se quedó en esas dos y no en «revisada / comentada / asignada»:
       asignar no tiene a quién —son ~5 usuarios que miran la misma pantalla— y tres estados que
       nadie sabe distinguir se rellenan al azar.
+- [ ] **Conectar el calendario de capacidades con su configuración** (§7, fase 11). Los
+      umbrales y los tres colores ya se guardan, y el calendario ya avisa mientras estén sin
+      poner: falta que `⚡capacity-calendar` lea `Setting::for('capacity-calendar')` y pinte la
+      ocupación con el color del tramo. Ojo al hacerlo: hoy el rojo del «se pasa de la
+      capacidad» es una regla aparte —ocupación > 100 %— y hay que decidir si la sustituye el
+      color del tramo bueno o convive con él.
 - [ ] **¿Pest?** §7 pedía el test de contrato en Pest y está en PHPUnit, porque Pest no está
       instalado y añadirlo choca con la regla 2 de `CLAUDE.md`. Decisión pendiente.
 - [ ] **Backfill de `codigo`** para los comercios que lo tengan. Se puede extraer del portal

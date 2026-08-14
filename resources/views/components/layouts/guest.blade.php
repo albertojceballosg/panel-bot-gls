@@ -8,6 +8,11 @@
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="h-full bg-slate-100 text-slate-900 antialiased">
+    {{-- También aquí: quien llega expulsado por una restauración trae su aviso
+         en la sesión, y sin el contenedor se perdería justo en la pantalla en
+         la que hace falta entender por qué te han echado. --}}
+    <x-ui.toasts />
+
     <main class="flex min-h-full items-center justify-center px-4 py-12">
         {{ $slot }}
     </main>

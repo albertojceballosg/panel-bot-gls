@@ -5,6 +5,7 @@ namespace App\Models\Concerns;
 use App\Enums\AuditAction;
 use App\Models\AuditLog;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Auth;
 
@@ -47,9 +48,15 @@ trait Auditable
             $model->writeAudit(AuditAction::Delete, $model->auditableSnapshot(), null);
         });
 
-        static::restored(function (self $model) {
-            $model->writeAudit(AuditAction::Restore, null, $model->auditableSnapshot());
-        });
+        // Sólo si el modelo se da de baja en pasivo. `restored` lo aporta
+        // `SoftDeletes`, y registrarlo en un modelo que no lo usa —`Setting`, que
+        // no se da de baja: se cambia— revienta durante el arranque del propio
+        // modelo, con un error que no menciona ni la auditoría ni el evento.
+        if (in_array(SoftDeletes::class, class_uses_recursive(static::class), true)) {
+            static::restored(function (self $model) {
+                $model->writeAudit(AuditAction::Restore, null, $model->auditableSnapshot());
+            });
+        }
     }
 
     /** El historial de este registro, del cambio más reciente al más antiguo. */

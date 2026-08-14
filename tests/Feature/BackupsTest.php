@@ -192,7 +192,8 @@ class BackupsTest extends TestCase
             ->set('confirmation', 'RESTAURAR')
             ->call('restore')
             ->assertNoRedirect()
-            ->assertSee('could not read from input file');
+            ->assertDispatched('toast', fn ($nombre, $params) => $params['type'] === 'error'
+                && str_contains($params['message'], 'could not read from input file'));
 
         $this->assertAuthenticated();
     }

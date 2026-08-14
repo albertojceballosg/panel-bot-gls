@@ -236,9 +236,11 @@ class CouriersCrudTest extends TestCase
 
         // El trait es compartido con rutas, que es femenino: «Mensajero dada de
         // baja» sería el fallo si no se distinguiera.
+        // El aviso viaja como toast desde el 14/08/2026: se comprueba el
+        // evento, que es lo que la pantalla emite de verdad.
         Livewire::test('couriers')
             ->call('delete', $courier->id)
-            ->assertSee('UT dada de baja');
+            ->assertDispatched('toast', message: 'UT dada de baja.');
     }
 
     // --- Confirmación de la baja ---------------------------------------------
