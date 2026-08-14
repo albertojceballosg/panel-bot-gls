@@ -346,7 +346,8 @@ Las tres tablas del maestro usan `SoftDeletes`, y también `users`. Dar de baja 
 el maestro es el histórico del negocio y un borrado en falso es indistinguible de un error de
 captura. En `users` sirve además para quitarle el acceso a alguien sin perder de quién era la
 cuenta — un usuario dado de baja no pasa `Auth::attempt`, porque el proveedor de Eloquent
-consulta el modelo y arrastra el scope de `SoftDeletes`.
+consulta el modelo y arrastra el scope de `SoftDeletes`. Las cuentas se mantienen desde el
+panel (§7, fase 8); `users.last_name` es nullable porque las que ya existían no lo tienen.
 
 **Los índices únicos son parciales, con `WHERE deleted_at IS NULL`.** No es un adorno: un
 índice único normal cuenta también las filas dadas de baja, así que el sustituto de un
@@ -1291,6 +1292,101 @@ hace de verdad, y se comprueba que `pg_restore --list` lo sabe leer. El ciclo co
 —volcar, escribir después, restaurar y ver que lo escrito después desapareció— se verificó a
 mano contra una base desechable el 13/08/2026.
 
+### Fase 8 — Usuarios del panel. Hecha el 14/08/2026
+
+`GET /users`, en el bloque **Sistema** de la barra lateral y no en la lista de arriba: son las
+cuentas que entran a la aplicación, no maestro que el cliente mantenga a diario. Alta, edición,
+baja y reactivación sobre el mismo `CrudScreen` que rutas, UT y comercios, con el mismo
+buscador —nombre, apellido o correo— y la misma casilla de dados de baja.
+
+**`users.last_name`, nullable en la base y obligatorio en el formulario** (migración del
+14/08/2026). Nullable y no `default('')` porque las cuentas que ya existían —la del
+`InitialUserSeeder`, entre ellas— no tienen apellido y nadie puede inventárselo: un NULL dice
+«no consta», que es la verdad. La validación sí lo exige, porque lo que se dé de alta de ahora
+en adelante debe tenerlo; la base guarda lo que hay y el formulario pide lo que debería haber.
+**Consecuencia aceptada**: editar una cuenta anterior obliga a rellenarle el apellido, y hay un
+test que lo fija para que no se lea como un fallo. `name` se queda como el
+nombre de pila y **no se parte en dos**: es lo que firma en `audit_logs.user_name` y lo que
+`AuditPresenter::record()` usa para nombrar la fila, así que trocearlo habría reescrito el
+historial. `User::fullName()` los junta para la pantalla, nada más.
+
+Tres decisiones que no son de estilo:
+
+1. **La contraseña nunca sale de la base.** El formulario la pide en blanco siempre, y al
+   editar vacío significa «déjala como está». Enseñar la actual es imposible —es un hash— y
+   exigirla en cada cambio de correo invita a poner una floja para salir del paso. Se guarda
+   asignándola al modelo, cuyo cast `hashed` la cifra: llamar además a `Hash::make` la
+   hashearía dos veces y nadie podría entrar. Hay un test de cada cosa.
+
+2. **Nadie se da de baja a sí mismo**, y eso vive en la pantalla, no en el modelo — al revés
+   que la regla de `PickupRoute`. «A ti mismo» sólo significa algo habiendo sesión: en el
+   modelo rompía a los seeders y a los tests que borran su propio usuario, que es exactamente
+   la señal de que estaba en el sitio equivocado. La fila propia va marcada con «tú» y sin
+   botón de baja; la comprobación en `delete()` es la red por si la llamada llega igual.
+
+3. **De ahí sale gratis que el panel nunca se quede sin usuarios**: si sólo hay una cuenta, esa
+   cuenta es la de quien está mirando, y la suya no se puede borrar. No hace falta un guardia
+   aparte contando filas, que fue lo primero que se escribió y lo que rompió media suite.
+
+**El ancho del modal es una prop, no una clase suelta** (`ui/modal`, `width`, por defecto
+`max-w-lg`). Antes se colaba por `class` y convivían dos `max-w-*` en el mismo elemento, con lo
+que quién ganaba lo decidía el orden del CSS de Tailwind y no quien llamaba —`confirm-modal`
+pedía `max-w-md` y se quedaba en `lg`—. La ficha de usuario usa `max-w-2xl` porque **pasa de
+tres campos**: con el ancho de siempre salía en una tira larga. Nombre y apellido comparten
+fila, y las dos contraseñas también; en móvil se apilan (`sm:grid-cols-2`).
+
+**Los mensajes de validación, todos en castellano.** `lang/es/validation.php` gana `confirmed`
+y `file`, y `last_name` en la lista de atributos; sin ellos el formulario respondía «The
+password field confirmation does not match». Se repasaron **todas** las reglas que usa el panel
+—rutas, UT, comercios, usuarios, login y la subida de una copia— comprobando el mensaje que
+sale de verdad, no la lista de claves. Hay un test que fija tres de ellos en la pantalla de
+usuarios.
+
+El correo es único **entre los vivos**, como el resto del esquema (§4): dar de baja libera el
+correo por si esa persona vuelve o alguien hereda la cuenta. La contraseña no llega al
+historial —`#[Hidden]` la excluye vía `Auditable`— y hay un test que lo comprueba sobre el
+volcado del alta, no sobre la teoría.
+
+### Fase 9 — Gestionar la incidencia. Hecha el 14/08/2026
+
+Cierra el pendiente de §8. Cada incidencia del detalle de una jornada se puede **comentar** y
+marcar como **atendida**, y el listado lo dice sin abrirla: distintivo por fila («Atendida», «Con
+comentario», «Pendiente»), contador «Sin atender» en el balance del día y «Todas atendidas» /
+«N sin atender» en la cabecera de cada ruta. La pantalla deja de ser un informe que se lee y
+pasa a ser una lista de trabajo.
+
+Cuatro columnas nuevas en `run_packages`: `handled_at`, `handled_by`, `handled_by_name` y
+`handling_note`.
+
+1. **Viven en la tabla que escribe el bot**, y no en una `run_package_handlings` aparte. Es uno
+   a uno con el paquete y la pantalla lo lee siempre: la tabla aparte obligaba a un join —o a
+   una consulta por fila— para pintar un distintivo. Lo que lo hace seguro es que el *upsert*
+   de la fase 6.B escribe **una lista explícita de columnas**, las del contrato, y no `$row`
+   entero; y `RunPackage::$fillable` **no incluye** las de gestión, para que ningún campo del
+   payload pueda escribirlas. Reenviar la jornada corrige los datos del bot y no borra lo que
+   una persona anotó: hay un test en `IncidentIntakeTest` que lo fija, porque es la clase de
+   cosa que se rompe callando.
+
+2. **`handled_at` nulo es «pendiente», y es la única fuente de verdad.** Un booleano aparte
+   podría contradecir a la fecha, y entonces no valdría ninguno de los dos.
+
+3. **Editar el comentario no mueve la fecha de atención.** Es el dato que responde «cuánto
+   tardamos en ocuparnos de esto», y se movería sola cada vez que alguien añade una línea.
+   Reabrir sí borra fecha, id y nombre: dejar el rastro de una atención que ya no vale es peor
+   que no tenerlo.
+
+4. **`handled_by_name` va desnormalizado**, como `audit_logs.user_name` (§4): quien atendió una
+   incidencia en agosto tiene que seguir leyéndose dentro de dos años, dado de baja o
+   renombrado. `RunPackage` **sigue sin ser `Auditable`** —lo escribe el bot cientos de veces al
+   día y ahogaría el historial—; el rastro de quién atendió qué son estas cuatro columnas.
+
+El comentario **no es obligatorio** para cerrar una incidencia: exigirlo sólo produce
+comentarios que dicen «ok». El diálogo de gestión es distinto del de detalle a propósito: uno se
+abre para mirar y el otro para escribir, y mezclarlos convierte una consulta en un formulario.
+El id del paquete llega del cliente, así que se busca **dentro de la jornada** (`$run->packages()
+->findOrFail()`) y no con un `find` suelto; hay un test que lo comprueba con el paquete de otro
+día. Primitiva nueva: `ui/textarea`, gemela de `ui/input`.
+
 ## 8. Pendientes y decisiones abiertas
 
 - [x] **Cerrar con el repo del bot el cambio de `ruta` a texto** (§3). Acordado el
@@ -1300,9 +1396,10 @@ mano contra una base desechable el 13/08/2026.
 - [ ] **Todo el trabajo pendiente con el bot está planificado en la fase 6 de §7**: añadir los
       `id` al maestro, guardar las incidencias, la pantalla y el backfill del `codigo`. Los
       dos puntos que estaban sueltos aquí se movieron allí, con su orden y su verificación.
-- [ ] **¿Estado de gestión sobre las incidencias?** (revisada, comentada, asignada). Sigue sin
-      decidirse, y sigue sin bloquear: el *upsert* de la fase 6.B sólo escribe las columnas que
-      manda el bot, así que añadir columnas propias del panel más adelante no choca con él.
+- [x] **Estado de gestión sobre las incidencias.** Decidido y hecho el 14/08/2026: comentario y
+      «atendida», ver §7 fase 9. Se quedó en esas dos y no en «revisada / comentada / asignada»:
+      asignar no tiene a quién —son ~5 usuarios que miran la misma pantalla— y tres estados que
+      nadie sabe distinguir se rellenan al azar.
 - [ ] **¿Pest?** §7 pedía el test de contrato en Pest y está en PHPUnit, porque Pest no está
       instalado y añadirlo choca con la regla 2 de `CLAUDE.md`. Decisión pendiente.
 - [ ] **Backfill de `codigo`** para los comercios que lo tengan. Se puede extraer del portal

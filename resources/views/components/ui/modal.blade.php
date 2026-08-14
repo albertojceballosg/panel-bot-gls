@@ -7,6 +7,11 @@
     'title',
     'description' => null,
     'close' => 'cancel',
+    // El ancho es una prop y no una clase suelta: si llega por `class` conviven
+    // dos `max-w-*` en el mismo elemento y quién gana lo decide el orden del
+    // CSS de Tailwind, no quien llama. Un formulario de más de tres campos pide
+    // `max-w-2xl` para poder parear campos en una fila; una confirmación, menos.
+    'width' => 'max-w-lg',
 ])
 
 <div class="fixed inset-0 z-40 overflow-y-auto"
@@ -19,7 +24,7 @@
          wire:click="{{ $close }}" aria-hidden="true"></div>
 
     <div class="flex min-h-full items-end justify-center p-4 sm:items-center">
-        <div {{ $attributes->class('relative w-full max-w-lg rounded-xl bg-white shadow-xl ring-1 ring-slate-900/5') }}>
+        <div {{ $attributes->class('relative w-full '.$width.' rounded-xl bg-white shadow-xl ring-1 ring-slate-900/5') }}>
             <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-4">
                 <div>
                     <h2 id="modal-title" class="text-base font-semibold text-shell-900">{{ $title }}</h2>

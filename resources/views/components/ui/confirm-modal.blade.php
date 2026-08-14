@@ -10,7 +10,7 @@
     'cancel' => 'cancelDelete',
 ])
 
-<x-ui.modal :title="$title" :close="$cancel" class="max-w-md">
+<x-ui.modal :title="$title" :close="$cancel" width="max-w-md">
     <div class="flex gap-4">
         <span class="grid size-10 shrink-0 place-items-center rounded-full bg-red-50 text-red-600">
             <svg class="size-5" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">

@@ -14,10 +14,14 @@
 return [
 
     'boolean' => 'El campo :attribute tiene que ser sí o no.',
+    'confirmed' => 'El campo :attribute y su repetición no coinciden.',
     // :decimal se sustituye por el rango de la regla («0-3»), de ahí el «con».
     'decimal' => 'El campo :attribute tiene que ser un número con :decimal decimales.',
     'email' => 'Eso no parece un correo válido.',
     'exists' => 'La opción elegida no existe.',
+    // Sin :attribute: el único sitio que la usa es la subida de una copia, y
+    // «el campo fichero tiene que ser un fichero» no le dice nada a nadie.
+    'file' => 'Eso no parece un fichero.',
     'integer' => 'El campo :attribute tiene que ser un número entero.',
     'numeric' => 'El campo :attribute tiene que ser un número.',
     'required' => 'El campo :attribute es obligatorio.',
@@ -53,6 +57,7 @@ return [
         'code' => 'código',
         'courier_id' => 'UT',
         'email' => 'correo',
+        'last_name' => 'apellido',
         'maximum_volume' => 'volumen máximo',
         'name' => 'nombre',
         'password' => 'contraseña',

@@ -21,6 +21,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class RunPackage extends Model
 {
+    /**
+     * Sólo lo que manda el bot: esta lista es la superficie del contrato de
+     * §3.1. La gestión del panel —`handled_at`, `handled_by`, `handling_note`—
+     * se asigna a mano en la pantalla y **no entra aquí a propósito**, para que
+     * ningún día un campo del payload acabe escribiéndola.
+     */
     protected $fillable = [
         'incident_run_id', 'shipment_id', 'barcode',
         'merchant_id', 'merchant_name',
@@ -44,6 +50,7 @@ class RunPackage extends Model
         return [
             'belt_time' => 'datetime',
             'withdrawn_at' => 'datetime',
+            'handled_at' => 'datetime',
             'deviation_minutes' => 'float',
             // Nulo si el portal no dio el dato. No confundir con cero: ver la migración.
             'volume_m3' => 'float',
@@ -82,6 +89,23 @@ class RunPackage extends Model
     public function scopeIncidents(Builder $query): Builder
     {
         return $query->whereNotNull('type');
+    }
+
+    /** Quien la marcó como atendida, si sigue en el maestro de usuarios. */
+    public function handledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'handled_by')->withTrashed();
+    }
+
+    /**
+     * Si alguien ya se ocupó de esto.
+     *
+     * `handled_at` es la única fuente de verdad del estado: un booleano aparte
+     * podría contradecir a la fecha, y entonces ninguna de las dos vale.
+     */
+    public function isHandled(): bool
+    {
+        return $this->handled_at !== null;
     }
 
     public function isIncident(): bool

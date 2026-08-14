@@ -234,6 +234,30 @@ class IncidentIntakeTest extends TestCase
         $this->assertFalse(IncidentRun::firstOrFail()->reliable);
     }
 
+    public function test_resending_does_not_erase_what_a_person_wrote(): void
+    {
+        $this->send($this->payload())->assertOk();
+
+        // La gestión del panel vive en columnas de esta misma tabla (§8): lo
+        // que la sostiene es que el upsert escriba una lista explícita de
+        // columnas —las del contrato— y no `$row` entero.
+        $paquete = RunPackage::firstOrFail();
+        $paquete->forceFill([
+            'handled_at' => now(),
+            'handled_by_name' => 'Quien la atendió',
+            'handling_note' => 'Hablado con la UT.',
+        ])->save();
+
+        $this->send($this->payload([$this->incident(['desvio_min' => 99.9])]))->assertOk();
+
+        $paquete->refresh();
+
+        $this->assertSame(99.9, $paquete->deviation_minutes);
+        $this->assertTrue($paquete->isHandled());
+        $this->assertSame('Quien la atendió', $paquete->handled_by_name);
+        $this->assertSame('Hablado con la UT.', $paquete->handling_note);
+    }
+
     public function test_incidents_that_stop_coming_are_withdrawn_not_deleted(): void
     {
         $this->send($this->payload([

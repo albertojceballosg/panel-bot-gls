@@ -26,6 +26,10 @@ class UserFactory extends Factory
     {
         return [
             'name' => fake()->name(),
+            // Las cuentas anteriores a la columna lo tienen a NULL y siguen
+            // siendo válidas; para lo que se crea de cero, lo normal es que
+            // conste, que es lo que exige el formulario (§7, fase 8).
+            'last_name' => fake()->lastName(),
             'email' => fake()->unique()->safeEmail(),
             'email_verified_at' => now(),
             'password' => static::$password ??= Hash::make('password'),

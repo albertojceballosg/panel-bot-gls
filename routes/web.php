@@ -35,6 +35,7 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/capacity-calendar', 'capacity-calendar')->name('capacity-calendar');
 
     // Sistema: mantenimiento del panel, no del maestro.
+    Route::livewire('/users', 'users')->name('users');
     Route::livewire('/backups', 'backups')->name('backups');
 
     // El volcado se genera y se manda al navegador en la misma petición. Ruta

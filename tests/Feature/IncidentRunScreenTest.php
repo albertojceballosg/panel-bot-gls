@@ -336,6 +336,143 @@ class IncidentRunScreenTest extends TestCase
             ->assertDontSee('Desvío sobre su ruta');
     }
 
+    // --- Gestión de la incidencia (14/08/2026) --------------------------------
+
+    public function test_it_saves_a_comment_without_closing_the_incident(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->set('note', 'Hablado con la UT: se confundió de jaula.')
+            ->call('saveHandling')
+            ->assertHasNoErrors();
+
+        $incidencia->refresh();
+
+        // Comentar no es atender: alguien la está mirando, y eso no es lo mismo
+        // que haberla cerrado.
+        $this->assertSame('Hablado con la UT: se confundió de jaula.', $incidencia->handling_note);
+        $this->assertNull($incidencia->handled_at);
+        $this->assertFalse($incidencia->isHandled());
+    }
+
+    public function test_marking_it_handled_records_who_and_when(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->set('handled', true)
+            ->call('saveHandling');
+
+        $incidencia->refresh();
+
+        $this->assertTrue($incidencia->isHandled());
+        $this->assertSame(auth()->id(), $incidencia->handled_by);
+
+        // El nombre copiado, como en `audit_logs` (§4): la fila tiene que
+        // leerse aunque quien la atendió se dé de baja.
+        $this->assertSame(auth()->user()->fullName(), $incidencia->handled_by_name);
+    }
+
+    public function test_editing_the_comment_does_not_move_the_date_it_was_handled(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+        $incidencia->forceFill([
+            'handled_at' => now()->subDays(3),
+            'handled_by' => auth()->id(),
+            'handled_by_name' => 'Quien fuera',
+        ])->save();
+
+        $cuando = $incidencia->handled_at;
+
+        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->set('note', 'Añado un detalle más.')
+            ->call('saveHandling');
+
+        // Al segundo: la columna es `timestampTz` sin decimales, como el resto
+        // de las fechas de esta tabla.
+        //
+        // Si se moviera, la pantalla mentiría sobre cuánto se tardó en atenderla.
+        $this->assertSame(
+            $cuando->toDateTimeString(),
+            $incidencia->refresh()->handled_at->toDateTimeString(),
+        );
+        $this->assertSame('Quien fuera', $incidencia->handled_by_name);
+    }
+
+    public function test_it_can_be_reopened(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+        $incidencia->forceFill([
+            'handled_at' => now(),
+            'handled_by' => auth()->id(),
+            'handled_by_name' => 'Quien fuera',
+        ])->save();
+
+        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->set('handled', false)
+            ->call('saveHandling');
+
+        $incidencia->refresh();
+
+        // Sin rastro de una atención que ya no vale.
+        $this->assertNull($incidencia->handled_at);
+        $this->assertNull($incidencia->handled_by);
+        $this->assertNull($incidencia->handled_by_name);
+    }
+
+    public function test_the_listing_says_whether_an_incident_was_handled(): void
+    {
+        $corrida = $this->storedRun();
+        $this->incident($corrida, '1')->forceFill([
+            'handled_at' => now(),
+            'handled_by' => auth()->id(),
+            'handled_by_name' => 'Quien mira',
+        ])->save();
+        $this->incident($corrida, '2');
+
+        // Sin esto habría que abrirlas una a una para saber cuáles quedan.
+        $this->get($this->url())->assertOk()
+            ->assertSee('Atendida')
+            ->assertSee('Pendiente')
+            ->assertSee('Sin atender');
+    }
+
+    public function test_a_package_of_another_day_cannot_be_managed_from_here(): void
+    {
+        $this->storedRun();
+        $otroDia = $this->incident($this->storedRun('2026-08-04'), '1');
+
+        // El id llega del cliente: sin acotar por jornada se podría anotar
+        // cualquier fila pasando otro número.
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+
+        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $otroDia->id);
+    }
+
+    public function test_a_comment_longer_than_the_column_is_rejected(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->set('note', str_repeat('a', 2001))
+            ->call('saveHandling')
+            ->assertHasErrors(['note' => 'max']);
+
+        $this->assertNull($incidencia->refresh()->handling_note);
+    }
+
     /** ~500 filas al día: una consulta para todas, no una por fila. */
     public function test_it_does_not_query_once_per_incident(): void
     {

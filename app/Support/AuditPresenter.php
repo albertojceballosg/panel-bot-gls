@@ -34,6 +34,7 @@ class AuditPresenter
     /** @var array<string, string> */
     private const CAMPOS = [
         'name' => 'Nombre',
+        'last_name' => 'Apellidos',
         'code' => 'Código',
         'maximum_volume' => 'Volumen máximo (m³)',
         'pickup_route_id' => 'Ruta',

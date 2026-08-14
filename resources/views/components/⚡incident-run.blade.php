@@ -29,6 +29,11 @@ use Livewire\Component;
  *
  * **Una sola consulta para las incidencias**, y el agrupado en memoria: son ~170
  * filas de un día y agrupar en SQL obligaría a una consulta por sección.
+ *
+ * Desde el 14/08/2026 es además una **lista de trabajo**: cada incidencia se
+ * puede comentar y marcar como atendida, y el listado lo dice sin abrirla. Ver
+ * la migración de `run_packages.handled_at` para por qué esas columnas viven en
+ * la tabla que escribe el bot.
  */
 new #[Layout('components.layouts.app')] class extends Component
 {
@@ -36,6 +41,13 @@ new #[Layout('components.layouts.app')] class extends Component
 
     /** El paquete abierto en el diálogo de detalle, si hay alguno. */
     public ?int $selected = null;
+
+    /** El paquete abierto en el diálogo de gestión, si hay alguno. */
+    public ?int $managing = null;
+
+    public string $note = '';
+
+    public bool $handled = false;
 
     public function mount(string $date): void
     {
@@ -50,6 +62,69 @@ new #[Layout('components.layouts.app')] class extends Component
     public function cancel(): void
     {
         $this->selected = null;
+    }
+
+    // --- Gestión de la incidencia -------------------------------------------
+
+    /**
+     * Abre el diálogo de gestión con lo que ya hubiera anotado.
+     *
+     * `firstOrFail` contra los paquetes de **esta** jornada y no `find` a secas:
+     * el id llega del cliente, y sin acotarlo se podría anotar el paquete de
+     * otro día pasando otro número.
+     */
+    public function manage(int $id): void
+    {
+        $paquete = $this->run->packages()->findOrFail($id);
+
+        $this->managing = $paquete->id;
+        $this->note = $paquete->handling_note ?? '';
+        $this->handled = $paquete->isHandled();
+    }
+
+    public function cancelManagement(): void
+    {
+        $this->reset('managing', 'note', 'handled');
+    }
+
+    /**
+     * Guarda el comentario y el estado.
+     *
+     * `handled_at` sólo se toca cuando el interruptor cambia de verdad: volver a
+     * guardar un comentario no debe mover la fecha de cuando se atendió, que es
+     * el dato que responde «¿cuánto tardamos en ocuparnos de esto?».
+     *
+     * El nombre de quien atiende se copia junto al id, como `audit_logs` (§4):
+     * la fila tiene que seguir leyéndose con el usuario dado de baja.
+     */
+    public function saveHandling(): void
+    {
+        $this->validate([
+            // Sin `required`: cerrar una incidencia sin comentario es legítimo,
+            // y forzar a escribir algo sólo produce comentarios que dicen «ok».
+            'note' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $paquete = $this->run->packages()->findOrFail($this->managing);
+
+        $paquete->handling_note = $this->note === '' ? null : $this->note;
+
+        if ($this->handled && ! $paquete->isHandled()) {
+            $paquete->handled_at = now();
+            $paquete->handled_by = auth()->id();
+            $paquete->handled_by_name = auth()->user()->fullName();
+        } elseif (! $this->handled && $paquete->isHandled()) {
+            // Reabrir: se borra también quién y cuándo. Dejar el rastro de una
+            // atención que ya no vale sería peor que no tenerlo.
+            $paquete->handled_at = null;
+            $paquete->handled_by = null;
+            $paquete->handled_by_name = null;
+        }
+
+        $paquete->save();
+
+        $this->cancelManagement();
+        session()->flash('ok', 'Incidencia actualizada.');
     }
 
     /** @return array<string, mixed> */
@@ -74,8 +149,13 @@ new #[Layout('components.layouts.app')] class extends Component
             // 13/08/2026 a petición, ver CONTEXTO §6.C.
             'firmes' => $incidencias->where('confidence', RunPackage::CONFIDENCE_HIGH)->count(),
 
+            // Cuántas quedan por mirar. Es lo que convierte la pantalla en una
+            // lista de trabajo en vez de en un informe que se lee y se olvida.
+            'pendientes' => $incidencias->reject->isHandled()->count(),
+
             'traspasos' => $this->traspasos($incidencias),
             'detalle' => $this->selected ? $paquetes->firstWhere('id', $this->selected) : null,
+            'gestion' => $this->managing ? $paquetes->firstWhere('id', $this->managing) : null,
         ];
     }
 
@@ -101,6 +181,7 @@ new #[Layout('components.layouts.app')] class extends Component
                     'paquetes' => $grupo->count(),
                     'total' => $incidencias->count(),
                     'firmes' => $incidencias->where('confidence', RunPackage::CONFIDENCE_HIGH)->count(),
+                    'pendientes' => $incidencias->reject->isHandled()->count(),
                     'acusaciones' => $this->firmesDelante($grupo->where('type', RunPackage::TYPE_OTHER_ROUTE)),
                     'descolgados' => $this->firmesDelante($grupo->where('type', RunPackage::TYPE_OUT_OF_BATCH)),
                     'correctos' => $grupo->reject->isIncident()->values(),
@@ -154,6 +235,10 @@ new #[Layout('components.layouts.app')] class extends Component
     <x-ui.page-header :title="$run->run_date->translatedFormat('j \d\e F \d\e Y')"
                       description="Paquetes que no pasaron por la cinta con el grueso de su ruta. Horas en UTC, las mismas que muestra GLS Atlas." />
 
+    @if (session('ok'))
+        <x-ui.alert type="success" class="mb-4">{{ session('ok') }}</x-ui.alert>
+    @endif
+
     {{-- Obligación 2: una jornada dudosa no cubre todos los envíos del día, y
          leerla como completa lleva a concluir «no hubo más incidencias» cuando
          lo cierto es «no se pudo mirar». --}}
@@ -168,12 +253,15 @@ new #[Layout('components.layouts.app')] class extends Component
     {{-- El balance, con la cobertura delante: sin el denominador, «168
          incidencias» se lee como si el día estuviera revisado entero. --}}
     <x-ui.card class="mb-4">
-        <dl class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {{-- Cinco columnas en pantalla ancha desde que hay «Sin atender»: con
+             `sm:grid-cols-4` la quinta caía sola a una segunda fila. --}}
+        <dl class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
             @foreach ([
                 ['Envíos del día', $run->shipments, null],
                 ['Evaluados', $run->evaluated, 'Los que tienen ruta en el maestro y hora de cinta'],
                 ['Incidencias', $incidencias->count(), 'Sobre los evaluados'],
                 ['Hallazgos firmes', $firmes, 'Los que el bot sostiene sin reservas'],
+                ['Sin atender', $pendientes, 'Incidencias que nadie ha marcado todavía como atendidas'],
             ] as [$label, $total, $ayuda])
                 <div @if ($ayuda) title="{{ $ayuda }}" @endif>
                     <dt class="text-xs font-medium text-slate-500">{{ $label }}</dt>
@@ -321,6 +409,18 @@ new #[Layout('components.layouts.app')] class extends Component
                             </div>
 
                             <div class="flex shrink-0 items-center gap-2">
+                                {{-- Lo que queda por mirar de esta ruta, sin
+                                     tener que desplegarla. --}}
+                                @if ($ruta['total'] > 0 && $ruta['pendientes'] === 0)
+                                    <span class="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                                        Todas atendidas
+                                    </span>
+                                @elseif ($ruta['pendientes'] > 0 && $ruta['pendientes'] < $ruta['total'])
+                                    <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+                                        {{ $ruta['pendientes'] }} sin atender
+                                    </span>
+                                @endif
+
                                 @if ($ruta['firmes'] > 0)
                                     <span class="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700">
                                         {{ $ruta['firmes'] }} firme{{ $ruta['firmes'] === 1 ? '' : 's' }}
@@ -361,7 +461,8 @@ new #[Layout('components.layouts.app')] class extends Component
                                                         <th class="pb-2 font-medium">Pasó con</th>
                                                     @endif
                                                     <th class="pb-2 font-medium">Fiabilidad</th>
-                                                    <th class="pb-2"><span class="sr-only">Detalle</span></th>
+                                                    <th class="pb-2 font-medium">Gestión</th>
+                                                    <th class="pb-2"><span class="sr-only">Acciones</span></th>
                                                 </tr>
                                             </thead>
                                             <tbody class="divide-y divide-slate-100">
@@ -389,24 +490,62 @@ new #[Layout('components.layouts.app')] class extends Component
                                                             @endif
                                                         </td>
 
+                                                        {{-- Atendida o no, en el propio listado: sin
+                                                             esto hay que abrir una por una para saber
+                                                             cuáles quedan. El comentario va en el
+                                                             tooltip, que es donde cabe. --}}
+                                                        <td class="py-2 pr-3">
+                                                            @if ($fila->isHandled())
+                                                                <span class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5
+                                                                             text-xs font-semibold text-emerald-700"
+                                                                      title="Atendida por {{ $fila->handled_by_name ?? 'alguien que ya no está' }} el {{ $fila->handled_at->translatedFormat('j \d\e F \a \l\a\s H:i') }}{{ $fila->handling_note ? ' · '.$fila->handling_note : '' }}">
+                                                                    <svg class="size-3" fill="none" viewBox="0 0 24 24"
+                                                                         stroke-width="3" stroke="currentColor">
+                                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                                                    </svg>
+                                                                    Atendida
+                                                                </span>
+                                                            @elseif ($fila->handling_note)
+                                                                {{-- Comentada pero sin cerrar: alguien
+                                                                     la está mirando, y eso no es lo
+                                                                     mismo que no haber empezado. --}}
+                                                                <span class="text-xs text-slate-500" title="{{ $fila->handling_note }}">
+                                                                    Con comentario
+                                                                </span>
+                                                            @else
+                                                                <span class="text-xs text-slate-400">Pendiente</span>
+                                                            @endif
+                                                        </td>
+
                                                         <td class="py-2 text-right">
-                                                            <x-ui.icon-button label="Ver el detalle del paquete"
-                                                                              wire:click="show({{ $fila->id }})">
-                                                                <svg class="size-4" fill="none" viewBox="0 0 24 24"
-                                                                     stroke-width="1.7" stroke="currentColor">
-                                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                                          d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                                          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                                </svg>
-                                                            </x-ui.icon-button>
+                                                            <div class="flex justify-end gap-1">
+                                                                <x-ui.icon-button label="Comentar o marcar como atendida"
+                                                                                  wire:click="manage({{ $fila->id }})">
+                                                                    <svg class="size-4" fill="none" viewBox="0 0 24 24"
+                                                                         stroke-width="1.7" stroke="currentColor">
+                                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                                              d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+                                                                    </svg>
+                                                                </x-ui.icon-button>
+
+                                                                <x-ui.icon-button label="Ver el detalle del paquete"
+                                                                                  wire:click="show({{ $fila->id }})">
+                                                                    <svg class="size-4" fill="none" viewBox="0 0 24 24"
+                                                                         stroke-width="1.7" stroke="currentColor">
+                                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                                              d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                                              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                                    </svg>
+                                                                </x-ui.icon-button>
+                                                            </div>
                                                         </td>
                                                     </tr>
 
                                                     @unless ($fila->isConclusive())
                                                         @if (filled($motivos = \App\Support\IncidentPresenter::reasons($fila)))
                                                             <tr>
-                                                                <td colspan="{{ $acusa ? 5 : 4 }}" class="pb-2 text-xs text-slate-400">
+                                                                <td colspan="{{ $acusa ? 6 : 5 }}" class="pb-2 text-xs text-slate-400">
                                                                     {{ implode('. ', $motivos) }}.
                                                                 </td>
                                                             </tr>
@@ -578,6 +717,55 @@ new #[Layout('components.layouts.app')] class extends Component
             <div class="flex justify-end border-t border-slate-200 px-6 py-4">
                 <x-ui.button type="button" wire:click="cancel">Cerrar</x-ui.button>
             </div>
+        </x-ui.modal>
+    @endif
+
+    {{-- Gestión: el comentario y el interruptor de atendida. Diálogo aparte del
+         de detalle a propósito — el de detalle se abre para mirar y este para
+         escribir, y mezclarlos convertiría una consulta en un formulario. --}}
+    @if ($gestion)
+        <x-ui.modal title="Gestión de la incidencia" close="cancelManagement"
+                    description="{{ $gestion->merchant_name }} · expedición {{ $gestion->shipment_id }}">
+            <form wire:submit="saveHandling" id="form-gestion" class="space-y-4">
+                <x-ui.field label="Comentario" for="note" :error="$errors->first('note')"
+                            hint="Qué se ha hecho o qué se ha averiguado. Lo lee quien abra la jornada después.">
+                    <x-ui.textarea wire:model="note" id="note" :invalid="$errors->has('note')"
+                                   placeholder="Hablado con la UT: se confundió de jaula al cargar." />
+                </x-ui.field>
+
+                <label class="flex items-start gap-3 rounded-lg border border-slate-200 px-3 py-2.5">
+                    <input type="checkbox" wire:model="handled"
+                           class="mt-0.5 size-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500">
+                    <span class="text-sm">
+                        <span class="font-medium text-shell-900">Incidencia atendida</span>
+                        <span class="block text-xs text-slate-500">
+                            Queda marcada en el listado con tu nombre y la fecha. Se puede desmarcar.
+                        </span>
+                    </span>
+                </label>
+
+                {{-- Quién y cuándo, si ya estaba atendida: es la mitad del dato,
+                     y sin ella «atendida» no le sirve a quien llega después. --}}
+                @if ($gestion->isHandled())
+                    <p class="text-xs text-slate-500">
+                        Atendida por
+                        <strong>{{ $gestion->handled_by_name ?? 'alguien que ya no está en el maestro' }}</strong>
+                        el {{ $gestion->handled_at->translatedFormat('j \d\e F \d\e Y \a \l\a\s H:i') }}.
+                    </p>
+                @endif
+            </form>
+
+            <x-slot:footer>
+                <x-ui.button variant="secondary" wire:click="cancelManagement" wire:loading.attr="disabled">
+                    Cancelar
+                </x-ui.button>
+
+                <x-ui.button type="submit" form="form-gestion"
+                             wire:loading.attr="disabled" wire:target="saveHandling">
+                    <span wire:loading.remove wire:target="saveHandling">Guardar</span>
+                    <span wire:loading wire:target="saveHandling">Guardando…</span>
+                </x-ui.button>
+            </x-slot:footer>
         </x-ui.modal>
     @endif
 </div>
