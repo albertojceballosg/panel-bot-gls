@@ -70,6 +70,8 @@ class IncidentIntakeController
             'incidencias.*.confianza' => ['required', 'in:'.RunPackage::CONFIDENCE_HIGH.','.RunPackage::CONFIDENCE_LOW],
             'incidencias.*.motivo_confianza' => ['present', 'array'],
             'incidencias.*.rutas_compatibles' => ['present', 'array'],
+            // Opcional: un bot anterior a la v3 del payload no la manda.
+            'incidencias.*.rutas_misma_tanda' => ['sometimes', 'array'],
 
             // Opcional: un bot que no la mande sigue funcionando igual.
             'paquetes' => ['sometimes', 'array'],
@@ -253,6 +255,12 @@ class IncidentIntakeController
             // GLS, porque ahí un cero es "no lo sé" y no "no ocupa nada" (ver la migración).
             'volume_m3' => $row['volumen_m3'] ?? null,
             'compatible_routes' => $row['rutas_compatibles'] ?? [],
+
+            // v3: quiénes descargaban en el mismo bloque. Ausente en los payloads
+            // anteriores, y entonces queda `[]`: la pantalla lo pinta igual que si no
+            // hubiera bloque compartido, que para una jornada v1/v2 es lo correcto —
+            // el dato no se perdió, es que nunca vino.
+            'batch_shared_routes' => $row['rutas_misma_tanda'] ?? [],
             'confidence' => $row['confianza'] ?? null,
             'confidence_reasons' => $row['motivo_confianza'] ?? [],
 
@@ -276,6 +284,7 @@ class IncidentIntakeController
                 $r['ruta_asignada']['id'] ?? null,
                 $r['ruta_observada']['id'] ?? null,
                 ...collect($r['rutas_compatibles'] ?? [])->pluck('id'),
+                ...collect($r['rutas_misma_tanda'] ?? [])->pluck('id'),
             ])
             ->filter()->unique()->values();
     }

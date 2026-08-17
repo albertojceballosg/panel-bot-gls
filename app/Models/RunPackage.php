@@ -33,7 +33,8 @@ class RunPackage extends Model
         'assigned_route_id', 'assigned_route_name', 'assigned_courier_name',
         'observed_route_id', 'observed_route_name',
         'type', 'belt_time', 'deviation_minutes', 'volume_m3',
-        'compatible_routes', 'confidence', 'confidence_reasons', 'withdrawn_at',
+        'compatible_routes', 'batch_shared_routes', 'confidence', 'confidence_reasons',
+        'withdrawn_at',
     ];
 
     /** El paquete pasó en la tanda principal de otra ruta: hay a quién señalar. */
@@ -43,6 +44,7 @@ class RunPackage extends Model
     public const TYPE_OUT_OF_BATCH = 'fuera_de_tanda';
 
     public const CONFIDENCE_HIGH = 'alta';
+
     public const CONFIDENCE_LOW = 'baja';
 
     protected function casts(): array
@@ -55,6 +57,7 @@ class RunPackage extends Model
             // Nulo si el portal no dio el dato. No confundir con cero: ver la migración.
             'volume_m3' => 'float',
             'compatible_routes' => 'array',
+            'batch_shared_routes' => 'array',
             'confidence_reasons' => 'array',
         ];
     }

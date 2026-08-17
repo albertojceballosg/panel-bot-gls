@@ -1,8 +1,11 @@
 <?php
 
+use App\Exceptions\DoubleSubmitException;
 use App\Models\Setting;
+use App\Support\PreventsDoubleSubmit;
 use App\Support\SendsToasts;
 use App\Support\SettingsCatalog;
+use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 
@@ -23,7 +26,7 @@ use Livewire\Component;
  */
 new #[Layout('components.layouts.app')] class extends Component
 {
-    use SendsToasts;
+    use PreventsDoubleSubmit, SendsToasts;
 
     public string $module = '';
 
@@ -38,6 +41,22 @@ new #[Layout('components.layouts.app')] class extends Component
         $this->values = Setting::for($module);
     }
 
+    /**
+     * Guarda los parámetros del módulo.
+     *
+     * **El cerrojo no es adorno aquí.** `Setting::store` escribe una fila por
+     * parámetro y cada una deja su entrada de auditoría; dos envíos a la vez
+     * pueden intercalarse y dejar el historial contando un cambio que nadie
+     * hizo — «óptimo: 70 → 80» y «óptimo: 80 → 70» seguidos. Desactivar el
+     * botón en el navegador (`wire:loading.attr`) no cubre el doble clic que
+     * llega antes de que reaccione el JS, ni dos pestañas abiertas a la vez.
+     *
+     * La transacción es la otra mitad: si falla el tercer parámetro, no pueden
+     * quedar guardados los dos primeros. Es lo mismo que hace `CrudScreen`.
+     *
+     * El cerrojo lleva el módulo en la clave para que configurar el calendario
+     * no bloquee al que está tocando el análisis de incidencias.
+     */
     public function save(): void
     {
         $this->validate(
@@ -45,7 +64,18 @@ new #[Layout('components.layouts.app')] class extends Component
             attributes: SettingsCatalog::labels($this->module, 'values.'),
         );
 
-        Setting::store($this->module, $this->values);
+        try {
+            $this->withoutDoubleSubmit(
+                "settings:{$this->module}",
+                fn () => DB::transaction(fn () => Setting::store($this->module, $this->values)),
+            );
+        } catch (DoubleSubmitException) {
+            // El primer envío está guardando esto mismo. Se calla en vez de
+            // avisar de un error, porque va a salir bien — pero **sin** el
+            // toast de éxito: anunciarlo dos veces diría que se guardó dos
+            // veces, que es justo lo que no ha pasado.
+            return;
+        }
 
         $this->toast('Configuración guardada.');
     }
@@ -65,7 +95,35 @@ new #[Layout('components.layouts.app')] class extends Component
         @php
             $porcentajes = collect($definicion['fields'])->where('type', \App\Support\SettingsCatalog::TYPE_PERCENT);
             $colores = collect($definicion['fields'])->where('type', \App\Support\SettingsCatalog::TYPE_COLOR);
+            $minutos = collect($definicion['fields'])->where('type', \App\Support\SettingsCatalog::TYPE_MINUTES);
         @endphp
+
+        @if ($minutos->isNotEmpty())
+            <x-ui.card>
+                <h2 class="text-sm font-semibold text-shell-900">Ventana horaria</h2>
+                <p class="mt-0.5 text-sm text-slate-500">
+                    El bot lo aplica en su siguiente corrida. Las jornadas ya analizadas conservan
+                    el valor con el que se calcularon: cambiar esto no reescribe el pasado.
+                </p>
+
+                <div class="mt-4 grid gap-4 sm:grid-cols-2">
+                    @foreach ($minutos as $key => $campo)
+                        <x-ui.field :label="$campo['label']" :for="$key" :hint="$campo['hint'] ?? null"
+                                    :error="$errors->first('values.'.$key)">
+                            {{-- Sin `max`, igual que el catálogo: ver TYPE_MINUTES. --}}
+                            <div class="relative">
+                                <x-ui.input wire:model.live.debounce.400ms="values.{{ $key }}" :id="$key"
+                                            type="number" min="1" step="1" class="pr-12"
+                                            :invalid="$errors->has('values.'.$key)" />
+                                <span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-slate-400">
+                                    min
+                                </span>
+                            </div>
+                        </x-ui.field>
+                    @endforeach
+                </div>
+            </x-ui.card>
+        @endif
 
         @if ($porcentajes->isNotEmpty())
             <x-ui.card>

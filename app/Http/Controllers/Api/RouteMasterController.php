@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Models\Merchant;
+use App\Models\Setting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 
@@ -39,6 +40,19 @@ class RouteMasterController
             // Informativo, con zona (§3). APP_TIMEZONE es Europe/Madrid.
             'generado' => now()->toIso8601String(),
 
+            // Los ajustes del análisis que el cliente controla desde
+            // /settings/bot. Viajan aquí y no por un endpoint propio porque el
+            // bot **guarda esta respuesta en disco** y la reutiliza cuando el
+            // panel no contesta: así el parámetro hereda gratis esa tolerancia a
+            // caídas, en vez de necesitar su propia caché.
+            //
+            // `null` cuando nadie lo ha configurado — el panel no inventa
+            // defectos (ver la migración de `settings`) — y entonces el bot se
+            // queda con el suyo. Un hueco aquí no puede cambiar un informe.
+            'parametros' => array_filter([
+                'semiancho_min' => self::entero(Setting::for('bot')['window_half_minutes'] ?? ''),
+            ], fn ($v) => $v !== null),
+
             'comercios' => $merchants->map(fn (Merchant $merchant) => [
                 // Identidad estable, y por eso va primero. El bot la guarda con
                 // el maestro y la devuelve al subir las incidencias (§3.1), de
@@ -66,5 +80,18 @@ class RouteMasterController
                 'codigo' => $merchant->code,
             ])->all(),
         ]);
+    }
+
+    /**
+     * El valor guardado como entero, o `null` si no hay ninguno.
+     *
+     * `Setting::for()` devuelve `''` para lo que nadie ha configurado y texto
+     * para lo demás, porque los ajustes se guardan como cadenas (ver la
+     * migración). Mandar `""` al bot le daría un valor que no es un número; el
+     * hueco tiene que llegar como hueco.
+     */
+    private static function entero(string $valor): ?int
+    {
+        return $valor === '' ? null : (int) $valor;
     }
 }

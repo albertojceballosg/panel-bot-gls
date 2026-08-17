@@ -18,22 +18,86 @@ use App\Models\RunPackage;
  */
 class IncidentPresenter
 {
-    /** Por qué el bot no sostiene un hallazgo, en palabras y no en clave. */
-    public static function reason(string $reason): string
+    /**
+     * Por qué el bot no sostiene un hallazgo, en palabras y no en clave.
+     *
+     * `$routes` son las rutas implicadas en *ese* motivo, para poder nombrarlas: decir
+     * «dos furgonetas descargaron juntas» sin decir cuáles obliga a quien lee a ir a
+     * buscarlo a las alertas de la jornada. Vacío cuando no se sabe —una jornada anterior
+     * a la v3 del payload no traía el dato— y entonces la frase se queda como estaba.
+     */
+    public static function reason(string $reason, array $routes = [], ?string $observed = null): string
+    {
+        // Fuera la ruta que la fila ya señala: repetirla no aporta nada y hace que la nota
+        // parezca contradecir a la columna. Lo que el lector necesita saber es cuál era la
+        // OTRA opción — «apunta a Ruta 4, pero podría haber sido Ruta 3».
+        $otras = self::names(array_values(array_filter(
+            $routes,
+            fn (array $r) => ($r['nombre'] ?? null) !== $observed,
+        )));
+        $todas = self::names($routes);
+
+        return match (true) {
+            $reason === 'tanda_compartida' && $observed !== null && $otras !== '' => "podría haber sido {$otras}, que descargaba en el mismo bloque",
+            $reason === 'tanda_compartida' && $todas !== '' => "{$todas} descargaron juntas: por la hora no se puede saber cuál lo llevó",
+            $reason === 'ventana_compartida' && $todas !== '' => "a esa hora estaban descargando {$todas}: encaja en más de una",
+            default => self::plain($reason),
+        };
+    }
+
+    /** «Ruta 3 y Ruta 4»; «Ruta 2, Ruta 3 y Ruta 6» a partir de tres. */
+    private static function names(array $routes): string
+    {
+        $nombres = collect($routes)->pluck('nombre')->filter()->values();
+
+        if ($nombres->count() < 2) {
+            return $nombres->implode('');
+        }
+
+        return $nombres->slice(0, -1)->implode(', ').' y '.$nombres->last();
+    }
+
+    private static function plain(string $reason): string
     {
         return match ($reason) {
             'ruta_dispersa' => 'esa ruta pasó desperdigada por la cinta ese día',
             'tanda_compartida' => 'dos furgonetas descargaron juntas: por la hora no se puede saber cuál lo llevó',
+
+            // Desde la v2 del payload (17/08/2026). No es lo mismo que el anterior y por eso
+            // son dos: `tanda_compartida` habla de la jornada —dos rutas descargaron en el
+            // mismo bloque—, y éste de la hora concreta de *este* paquete, que cae dentro de
+            // la ventana de más de una ruta. Pueden darse por separado.
+            'ventana_compartida' => 'a esa hora estaban descargando varias rutas: encaja en más de una',
 
             // Un motivo que el bot añada mañana no puede dejar la fila muda.
             default => str_replace('_', ' ', $reason),
         };
     }
 
-    /** @return list<string> */
+    /**
+     * Cada motivo con las rutas que le corresponden.
+     *
+     * A cada uno el suyo: `tanda_compartida` se explica con quiénes compartían el bloque de
+     * descarga y `ventana_compartida` con quiénes encajan en esa hora concreta. Suelen ser
+     * las mismas rutas, pero no tienen por qué, y cruzarlas diría algo falso.
+     *
+     * @return list<string>
+     */
     public static function reasons(RunPackage $incident): array
     {
-        return array_map(self::reason(...), $incident->confidence_reasons ?? []);
+        $rutasDe = [
+            'tanda_compartida' => $incident->batch_shared_routes ?? [],
+            'ventana_compartida' => $incident->compatible_routes ?? [],
+        ];
+
+        return array_map(
+            fn (string $motivo) => self::reason(
+                $motivo,
+                $rutasDe[$motivo] ?? [],
+                $incident->observed_route_name,
+            ),
+            $incident->confidence_reasons ?? [],
+        );
     }
 
     /**

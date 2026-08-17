@@ -24,10 +24,44 @@ class SettingsCatalog
 
     public const TYPE_COLOR = 'color';
 
+    /**
+     * Minutos. Sin tope por arriba a propósito (decisión del 17/08/2026): quien
+     * configura esto conoce su operación mejor que nosotros, y un máximo elegido
+     * a ojo se convertiría en un techo arbitrario el día que la cinta cambie de
+     * ritmo. El único límite es que sea un entero positivo — una ventana de cero
+     * minutos no contiene nada. Lo que sí hay es rastro: el bot registra en su
+     * log con qué valor corrió y lo manda en cada jornada.
+     */
+    public const TYPE_MINUTES = 'minutes';
+
     /** @return array<string, array<string, mixed>> */
     public static function modules(): array
     {
         return [
+            // Lo único configurable del análisis del bot. El resto de umbrales
+            // —el hueco de 5 min que parte las tandas, la tolerancia de 20 y el
+            // 80 % de concentración— siguen en código: salieron de medir días
+            // reales y moverlos a ciegas cambia acusaciones contra personas.
+            'bot' => [
+                'label' => 'Análisis de incidencias',
+                'route' => 'incidents',
+                'description' => 'La ventana horaria con la que el bot decide en qué ruta viajó '
+                    .'realmente un paquete que no pasó con la suya.',
+
+                'fields' => [
+                    'window_half_minutes' => [
+                        'type' => self::TYPE_MINUTES,
+                        'label' => 'Ventana de atribución (± minutos)',
+                        'hint' => 'El bot busca el momento de máxima descarga de cada ruta y abre una '
+                            .'ventana de tantos minutos a cada lado. Un paquete descolgado se atribuye '
+                            .'a otra ruta sólo si su hora cae dentro de una única ventana. Más minutos '
+                            .'= ventanas más anchas, que se solapan más y hacen que el bot se calle '
+                            .'más a menudo. Sin configurar, el bot usa ±10, que es el valor con el que '
+                            .'más acertó al medirlo sobre días reales.',
+                    ],
+                ],
+            ],
+
             'capacity-calendar' => [
                 'label' => 'Calendario de capacidades',
                 'route' => 'capacity-calendar',
@@ -115,6 +149,10 @@ class SettingsCatalog
                 // decimales la comparación entre umbrales invita a errores de
                 // redondeo. `min:1` porque un umbral en cero no separa nada.
                 self::TYPE_PERCENT => ['required', 'integer', 'min:1', 'max:100'],
+
+                // Sin `max`: ver la constante. Entero y positivo es todo lo que
+                // se exige.
+                self::TYPE_MINUTES => ['required', 'integer', 'min:1'],
 
                 // El `<input type="color">` siempre manda `#rrggbb`, pero el
                 // campo de texto de al lado deja escribir cualquier cosa, y esto

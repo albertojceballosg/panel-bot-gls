@@ -8,7 +8,7 @@ use App\Models\IncidentRun;
 /**
  * Jornadas e incidencias para los tests de pantalla.
  *
- * Un *trait* y no un *factory* porque `IncidentRun` e `Incident` no los crea
+ * Un *trait* y no un *factory* porque `IncidentRun` y `RunPackage` no los crea
  * nunca el panel —los escribe el bot por el endpoint de §3.1—, así que un
  * factory viviría en `database/factories` sugiriendo que hay altas por aquí.
  *

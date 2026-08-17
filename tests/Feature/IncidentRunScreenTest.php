@@ -250,13 +250,24 @@ class IncidentRunScreenTest extends TestCase
         $this->get('/merchants')->assertOk()->assertSee('Maestro de rutas de recogida');
     }
 
+    /**
+     * El resumen de traspasos, **y en qué dirección**.
+     *
+     * Antes esto sólo comprobaba que el título estuviese, y por eso pasó inadvertido que la
+     * pantalla se leía al revés: pintaba «Ruta 3 → Ruta 1» bajo el rótulo «Quién recogió de
+     * quién», que invita a entender que fue Ruta 3 quien recogió. Aquí el paquete era de
+     * Ruta 3 y se lo llevó Ruta 1, y eso es lo que tiene que leerse.
+     */
     public function test_it_summarises_who_picked_up_from_whom(): void
     {
         $corrida = $this->storedRun();
         $this->incident($corrida, '1', assignedRoute: 'Ruta 3', observedRoute: 'Ruta 1');
         $this->incident($corrida, '2', assignedRoute: 'Ruta 3', observedRoute: 'Ruta 1');
 
-        $this->get($this->url())->assertOk()->assertSee('Quién recogió de quién');
+        $this->get($this->url())
+            ->assertOk()
+            ->assertSee('Paquetes que se llevó otra ruta')
+            ->assertSeeInOrder(['Ruta 1', 'se llevó 2 de', 'Ruta 3']);
     }
 
     public function test_the_package_detail_opens_with_what_gls_atlas_needs(): void

@@ -4,9 +4,11 @@ namespace Tests\Feature;
 
 use App\Exceptions\DoubleSubmitException;
 use App\Models\PickupRoute;
+use App\Models\Setting;
 use App\Models\User;
 use App\Support\PreventsDoubleSubmit;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -92,5 +94,45 @@ class DoubleSubmitTest extends TestCase
         // El segundo envío no encuentra `editing`, así que sin cerrojo crearía
         // una segunda ruta con el mismo nombre — o chocaría con el índice.
         $this->assertSame(1, PickupRoute::where('name', 'Vallecas')->count());
+    }
+
+    /**
+     * La pantalla de configuración, que hasta el 17/08/2026 no tenía cerrojo.
+     *
+     * El cerrojo se toma a mano para simular la primera petición todavía en
+     * curso: dos llamadas seguidas desde el test son secuenciales y la primera
+     * ya habría soltado el suyo.
+     */
+    public function test_the_settings_screen_does_not_save_while_another_save_runs(): void
+    {
+        $usuario = User::factory()->create();
+        $this->actingAs($usuario);
+
+        $cerrojo = Cache::lock("double-submit:settings:bot:{$usuario->id}", 10);
+        $this->assertTrue($cerrojo->get());
+
+        Livewire::test('settings', ['module' => 'bot'])
+            ->set('values.window_half_minutes', '14')
+            ->call('save')
+            ->assertHasNoErrors();
+
+        // Ni guardó ni dijo que lo hubiera hecho: anunciar éxito por algo que
+        // está haciendo la otra petición diría que se guardó dos veces.
+        $this->assertDatabaseCount('settings', 0);
+
+        $cerrojo->release();
+    }
+
+    /** Y con el cerrojo libre guarda con normalidad, para que el test anterior signifique algo. */
+    public function test_the_settings_screen_saves_when_nothing_else_is_running(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        Livewire::test('settings', ['module' => 'bot'])
+            ->set('values.window_half_minutes', '14')
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $this->assertSame('14', Setting::for('bot')['window_half_minutes']);
     }
 }

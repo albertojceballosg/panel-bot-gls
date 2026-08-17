@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Courier;
 use App\Models\Merchant;
 use App\Models\PickupRoute;
+use App\Models\Setting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
@@ -46,6 +47,34 @@ class ApiContractTest extends TestCase
         }
 
         return Merchant::create(['name' => $name, 'code' => $code, 'pickup_route_id' => $pickupRoute->id]);
+    }
+
+    // --- Parámetros del análisis (17/08/2026) -------------------------------
+
+    /**
+     * El hueco llega como hueco.
+     *
+     * El panel no inventa defectos, así que un parámetro sin configurar **no
+     * puede** viajar como `""` ni como `0`: el bot los tomaría por un valor
+     * elegido y correría con una ventana absurda. Se omite, y el bot usa el suyo.
+     */
+    public function test_an_unset_parameter_is_absent_and_not_empty(): void
+    {
+        $this->merchant('COBO FAMILY, S.L.', '3', 'Freddy GLS');
+
+        $this->ask()->assertOk()->assertJson(['parametros' => []]);
+    }
+
+    public function test_the_configured_window_travels_as_an_integer(): void
+    {
+        $this->merchant('COBO FAMILY, S.L.', '3', 'Freddy GLS');
+        Setting::create(['module' => 'bot', 'key' => 'window_half_minutes', 'value' => '14']);
+
+        $respuesta = $this->ask()->assertOk();
+
+        // Entero y no la cadena "14": el bot lo usa para hacer aritmética con
+        // horas, y en JSON un número y su texto no son lo mismo.
+        $this->assertSame(14, $respuesta->json('parametros.semiancho_min'));
     }
 
     // --- Autenticación ------------------------------------------------------

@@ -457,7 +457,11 @@ new #[Layout('components.layouts.app')] class extends Component
                                                     <th class="pb-2 font-medium">Comercio</th>
                                                     <th class="pb-2 font-medium">Hora cinta</th>
                                                     @if ($acusa)
-                                                        <th class="pb-2 font-medium">Pasó con</th>
+                                                        {{-- «Apunta a» y no «Pasó con»: el 95 % de las filas son
+                                                             de confianza baja, y una columna que afirma choca con
+                                                             el «No concluyente» de la de al lado. El bot señala la
+                                                             ruta más compatible, no un hecho comprobado. --}}
+                                                        <th class="pb-2 font-medium">Apunta a</th>
                                                     @endif
                                                     <th class="pb-2 font-medium">Fiabilidad</th>
                                                     <th class="pb-2 font-medium">Gestión</th>
@@ -625,23 +629,28 @@ new #[Layout('components.layouts.app')] class extends Component
     {{-- El agregado que responde la pregunta del negocio de un vistazo. --}}
     @if ($traspasos->isNotEmpty())
         <section class="mb-6">
-            <h2 class="mb-2 text-sm font-semibold text-shell-900">Quién recogió de quién</h2>
+            {{-- Frase y no «Ruta 6 → Ruta 5»: con la flecha, «quién recogió de quién» se lee
+                 natural como «el primero recogió del segundo», que es justo lo contrario —
+                 el primero era el dueño del paquete y el segundo quien se lo llevó. Y no hay
+                 forma de deducirlo de los datos: el 10/08 aparecían «Ruta 1 → Ruta 4: 5» y
+                 «Ruta 4 → Ruta 1: 5», simétricas y con el mismo número. --}}
+            <h2 class="mb-2 text-sm font-semibold text-shell-900">Paquetes que se llevó otra ruta</h2>
 
             <x-ui.card>
                 <ul class="space-y-2 text-sm">
                     @foreach ($traspasos as $traspaso)
                         <li class="flex flex-wrap items-baseline gap-x-2">
-                            <span class="font-medium text-shell-900">{{ $traspaso['de'] }}</span>
-                            <span class="text-slate-400">→</span>
                             <span class="font-medium text-shell-900">{{ $traspaso['a'] }}</span>
-                            <span class="ml-auto tabular-nums text-slate-600">
-                                {{ $traspaso['total'] }}
-                                @if ($traspaso['firmes'] > 0)
-                                    <span class="ml-1 rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700">
-                                        {{ $traspaso['firmes'] }} firme{{ $traspaso['firmes'] === 1 ? '' : 's' }}
-                                    </span>
-                                @endif
-                            </span>
+                            <span class="text-slate-500">se llevó {{ $traspaso['total'] }} de</span>
+                            <span class="font-medium text-shell-900">{{ $traspaso['de'] }}</span>
+                            {{-- Sólo el distintivo: el total ya va dentro de la frase, y
+                                 repetirlo a la derecha se leía como si fueran dos cifras
+                                 distintas («se llevó 22 de Ruta 6   22»). --}}
+                            @if ($traspaso['firmes'] > 0)
+                                <span class="ml-auto rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700">
+                                    {{ $traspaso['firmes'] }} firme{{ $traspaso['firmes'] === 1 ? '' : 's' }}
+                                </span>
+                            @endif
                         </li>
                     @endforeach
                 </ul>
@@ -703,9 +712,14 @@ new #[Layout('components.layouts.app')] class extends Component
                             </p>
                         @endif
 
+                        {{-- «Otras rutas compatibles» y no «compartían esa tanda»: desde la v2
+                             del payload la lista son las rutas cuya VENTANA contiene esa hora,
+                             no las que compartían el bloque de descarga. El texto tiene que ser
+                             cierto también para las jornadas v1 ya guardadas, porque conviven en
+                             la misma tabla y ninguna pantalla mira el `payload_version`. --}}
                         @if (filled($detalle->compatible_routes))
                             <p class="mt-2 text-xs text-slate-500">
-                                Compartían esa tanda:
+                                Otras rutas compatibles a esa hora:
                                 {{ collect($detalle->compatible_routes)->pluck('nombre')->filter()->implode(', ') }}.
                             </p>
                         @endif
