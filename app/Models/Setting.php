@@ -71,9 +71,24 @@ class Setting extends Model
      */
     public static function missing(string $module): array
     {
+        return static::missingIn($module, static::for($module));
+    }
+
+    /**
+     * Lo mismo, pero sobre unos valores ya leídos.
+     *
+     * Existe para quien necesita las dos cosas —los valores para trabajar y lo
+     * que falta para avisar—: con `missing()` a secas, la pantalla que ya llamó
+     * a `for()` pagaría una segunda consulta por la misma fila.
+     *
+     * @param  array<string, string>  $values
+     * @return list<string>
+     */
+    public static function missingIn(string $module, array $values): array
+    {
         $campos = SettingsCatalog::module($module)['fields'] ?? [];
 
-        return collect(static::for($module))
+        return collect($values)
             ->filter(fn (string $valor) => $valor === '')
             ->keys()
             ->map(fn (string $key) => $campos[$key]['label'] ?? $key)

@@ -1191,34 +1191,43 @@ Cuatro decisiones que no son de estilo:
    paquete que pasó en la tanda de otra ruta sigue contando aquí para la suya: esto sirve para
    planificar, y las desviaciones son el asunto de la pantalla de incidencias.
 
-3. **Una suma incompleta se marca**, la obligación de §3. Un día con la mitad de los volúmenes
-   nulos no es un día flojo, y sin aviso se lee como tal; los nulos no suman como cero por lo
-   mismo. El denominador «1 de 3 envíos» estuvo debajo de cada celda hasta el **14/08/2026**:
-   con tres cifras por celda la tabla no se leía. Hoy el aviso vive **sólo en el tooltip** de la
-   celda, que dice cuántos envíos respaldan la suma; el ámbar duró unas horas y se quitó el
-   mismo día. Es mucho menos evidente que antes, y es una decisión consciente: la pantalla se
-   lee en diagonal y el aviso repetido en cada celda la hacía ilegible.
+3. **Una suma incompleta ya no se marca en la celda.** Los nulos siguen sin sumar como cero
+   —un nulo del portal es «no lo sé», §3— y la cobertura del día (`shipments` y `measured`)
+   se sigue calculando y llega a la vista, pero **desde el 17/08/2026 la pantalla no la
+   enseña**. El recorrido fue: el denominador «1 de 3 envíos» debajo de cada celda hasta el
+   14/08/2026 —con tres cifras por celda la tabla no se leía—, luego sólo en el tooltip, y el
+   17/08/2026 fuera también el tooltip, a petición.
+
+   **Es una renuncia consciente y va contra lo que pedía §3**: hoy un día con la mitad de los
+   volúmenes nulos se lee como un día flojo y nada dice que ocupó más. El dato está en la fila
+   —volver a enseñarlo es una línea de Blade— y hay un test que fija que hoy no se ve, para que
+   quitarlo haya sido una decisión y no una pérdida silenciosa.
 
 4. **Nada se esconde por no estar en el maestro.** Quien se dio de baja después de mover
    volumen esa semana conserva su fila, marcada, y las rutas que aquel día no llevaba nadie van
    a una fila «Sin UT asignada». Si no, la suma de la semana no cuadraría con la de incidencias
    y nadie sabría por qué.
 
-La cifra de cada día es **qué parte de la furgoneta ocupó** —con el volumen en m³ al lado, en
+La cifra de cada día es **qué parte de la furgoneta ocupó** —con el neto en m³ **debajo**, en
 pequeño, que sigue haciendo falta para cuadrar con incidencias—: la suma del día entre
 `couriers.maximum_volume`. Es la lectura que se busca —4 m³ es mucho o poco según quién los
-lleve— y por encima del 100 % es un día que no cabía. Sin capacidad declarada no hay entre qué
+lleve— y por encima del 100 % es un día que no cabía. Las dos cifras estuvieron en la misma
+línea hasta el **17/08/2026**: una al lado de la otra competían, y el porcentaje va siempre
+arriba porque es el que se lee en diagonal. Sin capacidad declarada no hay entre qué
 dividir, así que sale un guion; una capacidad de cero se trata igual, porque es un dato mal
 metido y no un divisor. **Sustituyó a la media semanal el 14/08/2026**, que respondía a otra
 pregunta: la media decía cuánto carga una UT y esto dice si el día le cabe.
 
 Un día sin corrida se marca como tal —no es un día sin
-trabajo— y uno con la corrida no fiable, también. La tabla entera se arma con **tres
-consultas** —corridas, agregado y maestro— y hay un test que lo fija: agrupar en SQL es lo que
-la mantiene en pie con el maestro entero delante.
+trabajo— y uno con la corrida no fiable, también. La tabla entera se arma con **cuatro
+consultas** —corridas, agregado, maestro y la configuración de la pantalla— y hay un test que
+lo fija: agrupar en SQL es lo que la mantiene en pie con el maestro entero delante.
 
-`couriers.maximum_volume` (§4) se enseña como columna, es el divisor de la ocupación y tiñe en
-rojo el día que se pasa. Es el único uso que hoy tiene ese campo.
+`couriers.maximum_volume` (§4) se enseña como columna y es el divisor de la ocupación. Es el
+único uso que hoy tiene ese campo.
+
+**El color del porcentaje lo decide la configuración** desde el 17/08/2026, no la pantalla: ver
+la fase 11 y §8, donde se cerró qué pasaba con el rojo del «se pasa de la capacidad».
 
 #### Orden de ataque
 
@@ -1452,8 +1461,8 @@ es parte de lo que la pantalla dice mientras está abierta y no puede desaparece
 
 `GET /settings/{module}`, en un bloque **Configuraciones** de la barra lateral con un hijo por
 módulo configurable. Son los parámetros con los que trabaja otra pantalla: umbrales, colores y
-lo que venga. Hoy sólo está el **calendario de capacidades**, y **todavía no lo lee nadie**: la
-fase entrega la configuración, no el efecto. Conectarlo es el pendiente de §8.
+lo que venga. Hoy sólo está el **calendario de capacidades**, que **la lee desde el
+17/08/2026**: la fase entregó la configuración y el efecto llegó después (ver más abajo).
 
 La pantalla de configuración lo avisaba con un `x-ui.alert`, retirado el mismo día a petición;
 con él se fue el soporte de `pending` en el catálogo. **El aviso que sí hay vive en el módulo
@@ -1506,6 +1515,39 @@ que se ha roto algo y no es verdad—. `AuditPresenter` aprende el módulo «Con
 diría «#7». `ui/nav-sublink` aprende a llevar parámetros de ruta y a marcarse activo sólo con
 los suyos: si no, todas las configuraciones se encenderían a la vez.
 
+#### El calendario conectado a su configuración — hecho el 17/08/2026
+
+`⚡capacity-calendar` pinta ya cada porcentaje con el color del tramo en que cae. Cuatro
+decisiones:
+
+1. **El tramo se decide sobre el porcentaje redondeado**, el mismo que se pinta. Con el crudo,
+   un 79,6 % que la tabla enseña como «80 %» se quedaría fuera del tramo bueno por una décima
+   que no se ve, y el color parecería un fallo de la pantalla.
+
+2. **El día que no llega al mínimo lleva icono de alerta**, no sólo color (17/08/2026). El
+   parámetro no es nuevo: es el `minimum_percent` que la fase 11 ya guardaba, renombrado a
+   **«Porcentaje mínimo de carga»** para que se lea como lo que es. Se reutilizó en vez de
+   añadir un segundo umbral porque un «mínimo de carga» aparte del «mínimo» del tramo malo
+   serían dos números que significan lo mismo y que alguien acabaría poniendo distintos. El
+   icono hereda el color del tramo por `currentColor` —lo sigue eligiendo el cliente— y su
+   texto dice de quién y de qué día es: se ve antes que la fila y la columna en las que está.
+
+3. **El rojo del «se pasa de la capacidad» no lo sustituye el color del tramo: conviven**, que
+   era la duda anotada en §8. No podía sustituirlo porque son dos preguntas distintas —el tramo
+   dice si el día fue flojo o bueno; pasarse dice que no cabía— y con el óptimo en 80 un 125 %
+   cae en el tramo *bueno*. Tampoco podía seguir siendo un color, porque los colores ahora los
+   elige el cliente. Así que el exceso pasó a ser una **marca ▲** junto a la cifra, con su
+   tooltip, y el color queda entero para el tramo.
+
+4. **Sin umbrales configurados no hay tramo y la cifra sale sin color**, coherente con no tener
+   valores por defecto. Y el hexadecimal se vuelve a filtrar en la vista aunque el formulario ya
+   lo valide: de ahí sale un atributo `style`, y una fila escrita a mano en la base no pasa por
+   el formulario. Hay un test que lo intenta con `javascript:alert(1)`.
+
+Sobre las consultas: `Setting::missingIn()` se separó de `missing()` para que la pantalla, que
+necesita **los valores para trabajar y lo que falta para avisar**, no pague dos consultas por la
+misma fila. La tabla sigue armándose con cuatro.
+
 ## 8. Pendientes y decisiones abiertas
 
 - [x] **Cerrar con el repo del bot el cambio de `ruta` a texto** (§3). Acordado el
@@ -1519,12 +1561,11 @@ los suyos: si no, todas las configuraciones se encenderían a la vez.
       «atendida», ver §7 fase 9. Se quedó en esas dos y no en «revisada / comentada / asignada»:
       asignar no tiene a quién —son ~5 usuarios que miran la misma pantalla— y tres estados que
       nadie sabe distinguir se rellenan al azar.
-- [ ] **Conectar el calendario de capacidades con su configuración** (§7, fase 11). Los
-      umbrales y los tres colores ya se guardan, y el calendario ya avisa mientras estén sin
-      poner: falta que `⚡capacity-calendar` lea `Setting::for('capacity-calendar')` y pinte la
-      ocupación con el color del tramo. Ojo al hacerlo: hoy el rojo del «se pasa de la
-      capacidad» es una regla aparte —ocupación > 100 %— y hay que decidir si la sustituye el
-      color del tramo bueno o convive con él.
+- [x] **Conectar el calendario de capacidades con su configuración** (§7, fase 11). Hecho el
+      17/08/2026: la ocupación se pinta con el color de su tramo. La duda que quedaba anotada
+      aquí —si el color del tramo sustituía al rojo del «se pasa de la capacidad»— se cerró en
+      que **conviven**: el exceso pasó a ser una marca ▲ y el color queda para el tramo. El
+      porqué, en §7, fase 11.
 - [ ] **¿Pest?** §7 pedía el test de contrato en Pest y está en PHPUnit, porque Pest no está
       instalado y añadirlo choca con la regla 2 de `CLAUDE.md`. Decisión pendiente.
 - [ ] **Backfill de `codigo`** para los comercios que lo tengan. Se puede extraer del portal

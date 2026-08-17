@@ -139,7 +139,7 @@ class CapacityCalendarTest extends TestCase
         $this->assertNull($celda['usage']);
     }
 
-    public function test_it_warns_when_the_sum_does_not_cover_every_shipment(): void
+    public function test_an_incomplete_sum_is_kept_apart_from_the_shipments_it_covers(): void
     {
         Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
 
@@ -155,8 +155,10 @@ class CapacityCalendarTest extends TestCase
         $this->assertSame(3, $celda['shipments']);
         $this->assertSame(1, $celda['measured']);
 
-        // El día ocupó más de ese 15 %, y eso no puede quedar callado (§3).
-        Livewire::test('capacity-calendar')->assertSee('El portal sólo dio el volumen de 1 de 3 envíos');
+        // La cobertura sigue calculándose y viajando a la vista, pero desde el
+        // 17/08/2026 la celda ya no la enseña: el tooltip se quitó a petición
+        // (§7, fase 6.D). El día ocupó más de ese 15 % y ahora no se dice.
+        Livewire::test('capacity-calendar')->assertDontSee('El portal sólo dio el volumen');
     }
 
     public function test_a_day_without_any_measured_volume_has_no_usage(): void
@@ -325,6 +327,139 @@ class CapacityCalendarTest extends TestCase
         }
 
         Livewire::test('capacity-calendar')->assertDontSee('Esta pantalla está sin configurar');
+    }
+
+    // --- Los tramos configurados (§7, fase 11) -------------------------------
+
+    /** Deja la pantalla configurada, que es como la ve el cliente. */
+    private function configurada(int $minimo = 60, int $optimo = 85): void
+    {
+        foreach ([
+            'minimum_percent' => (string) $minimo,
+            'optimal_percent' => (string) $optimo,
+            'bad_color' => '#dc2626',
+            'warning_color' => '#d97706',
+            'good_color' => '#16a34a',
+        ] as $clave => $valor) {
+            Setting::create(['module' => 'capacity-calendar', 'key' => $clave, 'value' => $valor]);
+        }
+    }
+
+    public function test_each_day_falls_in_one_of_the_configured_bands(): void
+    {
+        $this->configurada(minimo: 60, optimo: 85);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        // 50 %, 70 % y 90 %: uno de cada tramo.
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 5.0);
+        $this->package($this->runOn($this->lunes->copy()->addDay()), 'Freddy GLS', 7.0);
+        $this->package($this->runOn($this->lunes->copy()->addDays(2)), 'Freddy GLS', 9.0);
+
+        $dias = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'];
+
+        $this->assertSame('bad', $dias[$this->lunes->toDateString()]['band']);
+        $this->assertSame('warning', $dias[$this->lunes->copy()->addDay()->toDateString()]['band']);
+        $this->assertSame('good', $dias[$this->lunes->copy()->addDays(2)->toDateString()]['band']);
+    }
+
+    public function test_the_configured_colour_of_the_band_reaches_the_cell(): void
+    {
+        $this->configurada();
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 9.0);
+
+        Livewire::test('capacity-calendar')->assertSee('color: #16a34a', escape: false);
+    }
+
+    public function test_the_band_is_decided_on_the_percentage_that_is_shown(): void
+    {
+        // 79,6 % se pinta como «80 %»: con el umbral en 80 tiene que caer en el
+        // tramo bueno, o el color parecería un error de la pantalla.
+        $this->configurada(minimo: 60, optimo: 80);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 7.96);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        $this->assertSame('good', $celda['band']);
+    }
+
+    public function test_without_settings_there_is_no_band_and_no_colour(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 9.0);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        // Sin umbrales no se inventa ninguno (§7, fase 11): la cifra sale, el
+        // tramo no.
+        $this->assertSame(0.9, $celda['usage']);
+        $this->assertNull($celda['band']);
+    }
+
+    public function test_a_colour_that_is_not_a_hex_does_not_reach_the_style(): void
+    {
+        // El formulario lo valida, pero una fila escrita a mano en la base no
+        // pasa por él, y de aquí sale un atributo `style`.
+        $this->configurada();
+        Setting::where('key', 'good_color')->update(['value' => 'javascript:alert(1)']);
+
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 9.0);
+
+        Livewire::test('capacity-calendar')
+            ->assertSee('90 %')
+            ->assertDontSee('javascript:alert(1)', escape: false);
+    }
+
+    public function test_a_day_below_the_minimum_load_is_flagged_with_a_warning(): void
+    {
+        $this->configurada(minimo: 60, optimo: 85);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0);
+
+        // El aviso dice de quién y de qué día es: el icono se ve antes que la
+        // fila y la columna en las que está.
+        Livewire::test('capacity-calendar')
+            ->assertSee('40 %')
+            ->assertSee('Freddy GLS fue el '.$this->lunes->format('d/m').' por debajo del 60 % de carga mínima');
+    }
+
+    public function test_a_day_above_the_minimum_load_is_not_flagged(): void
+    {
+        $this->configurada(minimo: 60, optimo: 85);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 6.0);
+
+        Livewire::test('capacity-calendar')
+            ->assertSee('60 %')
+            ->assertDontSee('por debajo del 60 % de carga mínima');
+    }
+
+    public function test_without_a_minimum_configured_nothing_is_flagged_as_low(): void
+    {
+        // Sin umbral no hay con qué comparar, y un icono de alerta sin número
+        // detrás sería un aviso que nadie eligió (§7, fase 11).
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 0.5);
+
+        Livewire::test('capacity-calendar')
+            ->assertSee('5 %')
+            ->assertDontSee('de carga mínima');
+    }
+
+    public function test_a_day_over_the_capacity_is_marked_beyond_its_colour(): void
+    {
+        // Con el óptimo en 85, un 125 % cae en el tramo bueno: que no cupiera en
+        // la furgoneta ya no lo puede decir el color.
+        $this->configurada();
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 12.5);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        $this->assertSame('good', $celda['band']);
+        Livewire::test('capacity-calendar')->assertSee('Se pasa de la capacidad declarada');
     }
 
     public function test_the_screen_survives_an_empty_master(): void

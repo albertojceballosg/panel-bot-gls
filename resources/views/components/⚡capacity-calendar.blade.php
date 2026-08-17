@@ -90,8 +90,9 @@ new #[Layout('components.layouts.app')] class extends Component
      *
      * @param  Collection<int, object>  $celdas  Las agregadas de esta UT, una por día.
      * @param  Collection<int, Carbon>  $dias
+     * @param  array{minimum: ?int, optimal: ?int}  $umbrales  Los de §7, fase 11.
      */
-    private function row(string $label, ?float $capacity, ?string $note, Collection $celdas, Collection $dias): array
+    private function row(string $label, ?float $capacity, ?string $note, Collection $celdas, Collection $dias, array $umbrales): array
     {
         $porDia = $celdas->keyBy('dia');
 
@@ -99,7 +100,7 @@ new #[Layout('components.layouts.app')] class extends Component
             'label' => $label,
             'capacity' => $capacity,
             'note' => $note,
-            'days' => $dias->mapWithKeys(function (Carbon $dia) use ($porDia, $capacity) {
+            'days' => $dias->mapWithKeys(function (Carbon $dia) use ($porDia, $capacity, $umbrales) {
                 $clave = $dia->toDateString();
                 $celda = $porDia[$clave] ?? null;
 
@@ -109,14 +110,17 @@ new #[Layout('components.layouts.app')] class extends Component
 
                 $volumen = $celda->volumen === null ? null : (float) $celda->volumen;
 
+                // El `> 0` no es paranoia de división por cero: una furgoneta
+                // declarada con capacidad cero es un dato mal metido, y
+                // dividir por él daría un infinito en pantalla.
+                $ocupacion = $volumen === null || $capacity === null || $capacity <= 0
+                    ? null
+                    : $volumen / $capacity;
+
                 return [$clave => [
                     'volume' => $volumen,
-                    // El `> 0` no es paranoia de división por cero: una furgoneta
-                    // declarada con capacidad cero es un dato mal metido, y
-                    // dividir por él daría un infinito en pantalla.
-                    'usage' => $volumen === null || $capacity === null || $capacity <= 0
-                        ? null
-                        : $volumen / $capacity,
+                    'usage' => $ocupacion,
+                    'band' => $this->band($ocupacion, $umbrales),
                     'shipments' => (int) $celda->envios,
                     'measured' => (int) $celda->con_volumen,
                 ]];
@@ -124,6 +128,36 @@ new #[Layout('components.layouts.app')] class extends Component
             'shipments' => $celdas->sum(fn ($c) => (int) $c->envios),
             'measured' => $celdas->sum(fn ($c) => (int) $c->con_volumen),
         ];
+    }
+
+    /**
+     * En cuál de los tres tramos configurados cae un día: malo, justo o bueno
+     * (§7, fase 11).
+     *
+     * **Se compara sobre el porcentaje redondeado**, el mismo que se pinta: con
+     * el crudo, un 79,6 % que la tabla enseña como «80 %» se quedaría fuera del
+     * tramo bueno por una décima que no se ve, y el color parecería un error.
+     *
+     * Sin umbrales configurados no hay tramo —`null`— y la cifra sale sin color.
+     * Inventarlos cambiaría cómo se lee la tabla sin que nadie lo haya elegido,
+     * que es justo lo que §7 fase 11 decidió no hacer; para eso está el aviso de
+     * arriba, que enlaza a su configuración.
+     *
+     * @param  array{minimum: ?int, optimal: ?int}  $umbrales
+     */
+    private function band(?float $usage, array $umbrales): ?string
+    {
+        if ($usage === null || $umbrales['minimum'] === null || $umbrales['optimal'] === null) {
+            return null;
+        }
+
+        $porcentaje = round($usage * 100);
+
+        return match (true) {
+            $porcentaje < $umbrales['minimum'] => 'bad',
+            $porcentaje >= $umbrales['optimal'] => 'good',
+            default => 'warning',
+        };
     }
 
     /** @return array<string, mixed> */
@@ -161,12 +195,23 @@ new #[Layout('components.layouts.app')] class extends Component
         $maestro = Courier::orderBy('name')->get();
         $vacias = collect();
 
+        // Los parámetros de esta pantalla (§7, fase 11), en una sola consulta:
+        // de aquí salen tanto los tramos como el aviso de lo que falta por
+        // poner. `Setting::missing()` haría la misma consulta otra vez.
+        $ajustes = Setting::for('capacity-calendar');
+
+        $umbrales = [
+            'minimum' => $ajustes['minimum_percent'] === '' ? null : (int) $ajustes['minimum_percent'],
+            'optimal' => $ajustes['optimal_percent'] === '' ? null : (int) $ajustes['optimal_percent'],
+        ];
+
         $filas = $maestro->map(fn (Courier $ut) => $this->row(
             $ut->name,
             $ut->maximum_volume,
             null,
             $celdas[$ut->name] ?? $vacias,
             $dias,
+            $umbrales,
         ));
 
         // Las que movieron volumen esa semana y ya no están en el maestro: se
@@ -181,12 +226,13 @@ new #[Layout('components.layouts.app')] class extends Component
                 'Ya no está en el maestro',
                 $celdas[$nombre],
                 $dias,
+                $umbrales,
             ));
 
         // Y el volumen de las rutas que aquel día no llevaba nadie, por el mismo
         // motivo: es volumen que existió y tiene que verse en alguna fila.
         $sinUt = isset($celdas[''])
-            ? [$this->row('Sin UT asignada', null, 'Rutas que aquel día no llevaba nadie', $celdas[''], $dias)]
+            ? [$this->row('Sin UT asignada', null, 'Rutas que aquel día no llevaba nadie', $celdas[''], $dias, $umbrales)]
             : [];
 
         return [
@@ -194,7 +240,20 @@ new #[Layout('components.layouts.app')] class extends Component
             // todavía (§7, fase 11). No hay valores por defecto a propósito:
             // inventarle un umbral al cliente cambiaría cómo se lee la tabla sin
             // que él lo haya elegido, así que se pide y punto.
-            'faltanAjustes' => Setting::missing('capacity-calendar'),
+            'faltanAjustes' => Setting::missingIn('capacity-calendar', $ajustes),
+
+            // El color de cada tramo, ya filtrado: lo que no sea un `#rrggbb`
+            // no llega a la vista, porque de ahí sale un atributo `style`. El
+            // formulario lo valida igual, pero una fila escrita a mano en la
+            // base no pasa por él.
+            'colores' => collect(['bad' => 'bad_color', 'warning' => 'warning_color', 'good' => 'good_color'])
+                ->map(fn (string $key) => $ajustes[$key] ?? '')
+                ->filter(fn (string $color) => (bool) preg_match('/^#[0-9a-fA-F]{6}$/', $color))
+                ->all(),
+
+            // El mínimo de carga, para poder decirlo en el aviso del día flojo:
+            // «por debajo del 60 %» sin el número no dice nada.
+            'minimo' => $umbrales['minimum'],
 
             'lunes' => $lunes,
             'domingo' => $domingo,
@@ -336,45 +395,74 @@ new #[Layout('components.layouts.app')] class extends Component
                                         @else
                                             {{-- Manda lo que ocupó de la furgoneta, que es la
                                                  lectura útil: 4 m³ es mucho o poco según quién
-                                                 los lleve. En rojo lo que no le cabe, que es para
-                                                 lo que se mira esta pantalla. Sin capacidad
-                                                 declarada no hay entre qué dividir. --}}
+                                                 los lleve, y el neto va debajo. El color sale del
+                                                 tramo en que cae, de Configuraciones. Sin
+                                                 capacidad declarada no hay entre qué dividir. --}}
                                             @php
                                                 $pasada = $celda['usage'] !== null && $celda['usage'] > 1;
 
-                                                // El día del que el portal no dio todos los
-                                                // volúmenes ocupó más de lo que dice la cifra. No
-                                                // se marca en la celda —la tabla se lee en
-                                                // diagonal y el aviso repetido la ensuciaba—, pero
-                                                // el recuento queda en el tooltip: §3 no permite
-                                                // dar la suma por completa sin más.
-                                                $incompleta = $celda['measured'] < $celda['shipments'];
+                                                // Null mientras la pantalla esté sin configurar, y
+                                                // entonces la cifra sale en el color de siempre.
+                                                $color = $colores[$celda['band']] ?? null;
 
-                                                $aviso = match (true) {
-                                                    $pasada && $incompleta => 'Se pasa de la capacidad declarada, y aún así el portal sólo dio el volumen de '.$celda['measured'].' de '.$celda['shipments'].' envíos',
-                                                    $pasada => 'Se pasa de la capacidad declarada',
-                                                    $incompleta => 'El portal sólo dio el volumen de '.$celda['measured'].' de '.$celda['shipments'].' envíos: ocupó más de lo que dice la cifra',
-                                                    default => null,
-                                                };
+                                                // Por debajo del mínimo de carga configurado: ese
+                                                // día la UT salió más vacía de lo aceptable, y eso
+                                                // se marca en la celda además del color.
+                                                //
+                                                // El aviso dice de quién y de qué día es porque el
+                                                // icono se ve antes que la fila y la columna en las
+                                                // que está: leerlo tiene que bastar.
+                                                $floja = $celda['band'] === 'bad';
+
+                                                $avisoDeCargaBaja = $floja
+                                                    ? sprintf(
+                                                        '%s fue el %s por debajo del %d %% de carga mínima',
+                                                        $row['label'], $dia->format('d/m'), $minimo,
+                                                    )
+                                                    : null;
                                             @endphp
 
+                                            {{-- El porcentaje arriba y el neto debajo, siempre en
+                                                 ese orden: lo que se busca de un vistazo es la
+                                                 ocupación, y en línea con el volumen al lado las
+                                                 dos cifras competían. --}}
                                             @if ($celda['usage'] === null)
-                                                <span class="font-semibold text-slate-300"
+                                                <span class="block font-semibold text-slate-300"
                                                       title="Esta UT no tiene capacidad declarada">—</span>
                                             @else
-                                                <span @class([
-                                                    'font-semibold',
-                                                    'text-rose-600' => $pasada,
-                                                    'text-shell-900' => ! $pasada,
-                                                ]) @if ($aviso) title="{{ $aviso }}" @endif>
+                                                <span @class(['block font-semibold', 'text-shell-900' => $color === null])
+                                                      @style(['color: '.$color => $color !== null])>
+                                                    {{-- El aviso de carga baja delante de la cifra:
+                                                         se busca recorriendo la columna, y detrás
+                                                         competía con la marca de exceso. El icono
+                                                         hereda el color del tramo malo, así que lo
+                                                         sigue eligiendo el cliente. --}}
+                                                    @if ($floja)
+                                                        <svg class="mr-0.5 inline-block size-3.5 align-[-0.15em]" fill="none"
+                                                             viewBox="0 0 24 24" stroke-width="2.2" stroke="currentColor"
+                                                             role="img" aria-label="{{ $avisoDeCargaBaja }}">
+                                                            <title>{{ $avisoDeCargaBaja }}</title>
+                                                            <path stroke-linecap="round" stroke-linejoin="round"
+                                                                  d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                                                        </svg>
+                                                    @endif
+
                                                     {{ $ocupacion($celda['usage']) }}
+
+                                                    {{-- Que no cupiera en la furgoneta ya no puede
+                                                         decirlo el color —lo elige el cliente, y un
+                                                         125 % cae en el tramo bueno—, así que lo
+                                                         dice esta marca. --}}
+                                                    @if ($pasada)
+                                                        <span class="align-middle text-amber-500"
+                                                              title="Se pasa de la capacidad declarada">▲</span>
+                                                    @endif
                                                 </span>
                                             @endif
 
                                             {{-- El volumen del que sale, en pequeño: el dato bruto
                                                  sigue haciendo falta para cuadrar con incidencias. --}}
-                                            <span class="ml-1 text-xs text-slate-400"
-                                                  @if ($aviso) title="{{ $aviso }}" @endif>{{ $vol($celda['volume']) }}</span>
+                                            <span class="block text-xs text-slate-400">{{ $vol($celda['volume']) }}</span>
                                         @endif
                                     </td>
                                 @endforeach
@@ -387,12 +475,16 @@ new #[Layout('components.layouts.app')] class extends Component
             <div class="border-t border-slate-200 px-6 py-3 text-xs text-slate-500">
                 El volumen de un día es el de los paquetes que el maestro asignaba a la ruta de esa UT,
                 estuviera donde estuviera al final el paquete. <strong>El porcentaje es ese volumen entre
-                la capacidad declarada de su furgoneta</strong>, así que sale un guion en las UT que no la
-                tienen puesta en el maestro.
-                Las cifras en rojo son los días que se pasan de la capacidad declarada de la furgoneta.
+                la capacidad declarada de su furgoneta</strong>, y debajo va el neto en m³, así que sale
+                un guion en las UT que no tienen la capacidad puesta en el maestro.
+                El color de cada porcentaje es el del tramo en que cae —malo, justo o bueno—, según los
+                umbrales y los colores de
+                <a href="{{ route('settings', ['module' => 'capacity-calendar']) }}" wire:navigate
+                   class="font-medium underline underline-offset-2">Configuraciones · Calendario de capacidades</a>.
+                El icono de alerta marca los días que quedaron por debajo del porcentaje mínimo de carga,
+                y el ▲, los que se pasan de la capacidad declarada de la furgoneta.
                 Cuando el portal no da el volumen de todos los envíos ese hueco no se suma como cero
-                —significaría «no lo sé»—, así que la ocupación real puede ser mayor que la que se ve:
-                pasa el ratón por encima de la cifra para saber cuántos envíos la respaldan.
+                —significaría «no lo sé»—, así que la ocupación real puede ser mayor que la que se ve.
             </div>
         @endif
     </x-ui.card>

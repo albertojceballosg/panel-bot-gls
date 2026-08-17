@@ -200,7 +200,7 @@ class SettingsTest extends TestCase
     {
         $errores = $this->pantalla()->call('save')->errors();
 
-        $this->assertSame('El campo porcentaje mínimo es obligatorio.', $errores->first('values.minimum_percent'));
+        $this->assertSame('El campo porcentaje mínimo de carga es obligatorio.', $errores->first('values.minimum_percent'));
     }
 
     // --- Historial ---------------------------------------------------------------
@@ -215,7 +215,7 @@ class SettingsTest extends TestCase
         // cuándo es justo para lo que existe el historial (§4).
         $this->assertSame('70', $entrada->after['value']);
         $this->assertSame(
-            'Calendario de capacidades · Porcentaje mínimo',
+            'Calendario de capacidades · Porcentaje mínimo de carga',
             AuditPresenter::make()->record($entrada),
         );
     }

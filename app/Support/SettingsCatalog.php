@@ -36,8 +36,9 @@ class SettingsCatalog
                 'fields' => [
                     'minimum_percent' => [
                         'type' => self::TYPE_PERCENT,
-                        'label' => 'Porcentaje mínimo',
-                        'hint' => 'Por debajo de esto, el día se considera malo: la furgoneta salió demasiado vacía.',
+                        'label' => 'Porcentaje mínimo de carga',
+                        'hint' => 'Por debajo de esto la furgoneta salió demasiado vacía: el día se '
+                            .'considera malo y el calendario lo marca con un icono de alerta.',
                     ],
                     'optimal_percent' => [
                         'type' => self::TYPE_PERCENT,
