@@ -3,9 +3,11 @@
 namespace Tests\Feature;
 
 use App\Models\RunPackage;
+use App\Support\PermissionCatalog;
 use App\Models\PickupRoute;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 /**
@@ -500,5 +502,123 @@ class IncidentRunScreenTest extends TestCase
         $this->get($this->url())->assertOk();
 
         $this->assertLessThan(10, $consultas, "El detalle disparó {$consultas} consultas.");
+    }
+
+    // --- El resalte por UT, desde el calendario de capacidades (18/08/2026) ---
+
+    /** @return array<string, mixed>|null La sección de esa ruta, como la ve la vista. */
+    private function seccion($componente, string $ruta): ?array
+    {
+        return collect($componente->viewData('rutas'))->firstWhere('nombre', $ruta);
+    }
+
+    public function test_it_highlights_the_routes_of_the_courier_it_was_opened_with(): void
+    {
+        $corrida = $this->storedRun();
+        $this->incident($corrida, '1', assignedRoute: 'Ruta 3', courier: 'Freddy GLS');
+        $this->incident($corrida, '2', assignedRoute: 'Ruta 1', courier: 'Otro');
+
+        $componente = Livewire::withQueryParams(['ut' => 'Freddy GLS'])
+            ->test('incident-run', ['date' => '2026-08-03']);
+
+        $this->assertTrue($this->seccion($componente, 'Ruta 3')['destacada']);
+        $this->assertFalse($this->seccion($componente, 'Ruta 1')['destacada']);
+
+        $componente->assertSee('Resaltando las rutas de')->assertSee('Freddy GLS');
+    }
+
+    public function test_without_the_parameter_nothing_is_highlighted(): void
+    {
+        $corrida = $this->storedRun();
+        $this->incident($corrida, '1', assignedRoute: 'Ruta 3', courier: 'Freddy GLS');
+
+        $componente = Livewire::test('incident-run', ['date' => '2026-08-03']);
+
+        $this->assertFalse($this->seccion($componente, 'Ruta 3')['destacada']);
+        $componente->assertDontSee('Resaltando las rutas de');
+    }
+
+    public function test_a_courier_without_routes_that_day_is_told_so(): void
+    {
+        // Sin el aviso, un resalte que no aparece se lee como una pantalla rota.
+        $corrida = $this->storedRun();
+        $this->incident($corrida, '1', assignedRoute: 'Ruta 3', courier: 'Freddy GLS');
+
+        Livewire::withQueryParams(['ut' => 'Quien libraba'])
+            ->test('incident-run', ['date' => '2026-08-03'])
+            ->assertSee('no llevaba ninguna ruta en esta jornada');
+    }
+
+    public function test_the_routes_nobody_was_driving_are_highlighted_with_the_sentinel(): void
+    {
+        // En la fila «Sin UT asignada» del calendario no hay nombre que poner en
+        // la URL, y un `?ut=` vacío es «sin filtro».
+        $corrida = $this->storedRun();
+        $this->incident($corrida, '1', assignedRoute: 'Ruta 3', courier: null);
+        $this->incident($corrida, '2', assignedRoute: 'Ruta 1', courier: 'Freddy GLS');
+
+        $componente = Livewire::withQueryParams(['ut' => 'sin-ut'])
+            ->test('incident-run', ['date' => '2026-08-03']);
+
+        $this->assertTrue($this->seccion($componente, 'Ruta 3')['destacada']);
+        $this->assertFalse($this->seccion($componente, 'Ruta 1')['destacada']);
+        $componente->assertSee('Sin UT asignada');
+    }
+
+    public function test_the_highlight_can_be_dropped_without_leaving_the_day(): void
+    {
+        $corrida = $this->storedRun();
+        $this->incident($corrida, '1', assignedRoute: 'Ruta 3', courier: 'Freddy GLS');
+
+        $componente = Livewire::withQueryParams(['ut' => 'Freddy GLS'])
+            ->test('incident-run', ['date' => '2026-08-03'])
+            ->call('clearCourier')
+            ->assertSet('courier', '');
+
+        $this->assertFalse($this->seccion($componente, 'Ruta 3')['destacada']);
+    }
+
+    // --- Gestionar es escribir (§7, fase 12) ---------------------------------
+
+    public function test_reading_a_day_does_not_let_you_manage_its_incidents(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        // Sólo `incidents.view`: entra a la jornada, pero comentarla y darla por
+        // atendida es otro permiso, y a estos métodos se llega desde el
+        // navegador aunque el Blade no pinte el botón.
+        $mirona = User::factory()->withoutRole()->create();
+        $mirona->givePermissionTo('incidents.view');
+        $this->actingAs($mirona);
+
+        $this->get($this->url())->assertOk()->assertDontSee('Comentar o marcar como atendida');
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->assertForbidden();
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->set('handled', true)
+            ->call('saveHandling')
+            ->assertForbidden();
+
+        $this->assertNull($incidencia->refresh()->handled_at);
+    }
+
+    public function test_with_the_manage_permission_it_still_works(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        $this->actingAs(User::factory()->role(PermissionCatalog::ROLE_OPERATIONS)->create());
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->set('handled', true)
+            ->call('saveHandling')
+            ->assertHasNoErrors();
+
+        $this->assertNotNull($incidencia->refresh()->handled_at);
     }
 }

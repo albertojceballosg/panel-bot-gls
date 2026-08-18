@@ -578,9 +578,20 @@ renombrar desde el panel sin tocar nada más.
 - **PHP nativo en el host.** No hay PHP ni Composer en esta máquina, así que "nativo" era
   instalar y mantener un toolchain entero para un solo proyecto.
 
-**Lo que NO se va a construir** (dicho aquí para que no se cuele después): roles y permisos,
-multi-tenant, API de escritura, dashboard con gráficas. Son ~5 usuarios internos y dos
-tablas.
+**`spatie/laravel-permission`, añadida el 18/08/2026.** Es la única dependencia que ha entrado
+después del arranque, y entró **a petición del cliente y por nombre**. Lo que aporta y no
+íbamos a escribir mejor: la tabla pivote de roles y permisos, la caché del registrar y el
+enganche con el `Gate` de Laravel, que es lo que permite seguir usando el `can:` del framework
+en vez de un middleware nuestro. Ver §7, fase 12.
+
+**Lo que NO se va a construir** (dicho aquí para que no se cuele después): multi-tenant, API de
+escritura, dashboard con gráficas. Son ~5 usuarios internos y dos tablas.
+
+> Aquí ponía también **«roles y permisos»**, desde el 12/08/2026 y con el mismo argumento. Lo
+> pidió el cliente el **18/08/2026** y se construyó: la fase 12. Queda escrito porque la razón
+> de entonces no era mala —con ~5 personas que hacen lo mismo, los roles son ceremonia—; lo que
+> cambió es que la pantalla de copias se lleva la base entera del cliente en un fichero (§10) y
+> eso no es trabajo de todo el mundo.
 
 ## 6. Entorno de desarrollo
 
@@ -624,6 +635,7 @@ docker compose logs -f vite
 | 9 | Gestionar la incidencia: comentario y «atendida» | **Hecha** (14/08/2026) |
 | 10 | Mi perfil, y los avisos flotantes | **Hecha** (14/08/2026) |
 | 11 | Configuraciones por módulo, y el calendario leyéndolas | **Hecha** (14/08/2026; el calendario, el 17/08/2026) |
+| 12 | Roles y permisos, con su maestro | **Hecha** (18/08/2026) |
 
 > La tabla se quedó en la fase 5 hasta el **17/08/2026**, con seis fases descritas más abajo y
 > ninguna listada aquí: quien abría el documento por §7 leía que el proyecto iba por la mitad.
@@ -633,7 +645,7 @@ docker compose logs -f vite
 > Lo único que queda abierto de la 6 a la 11 es **6.D**, el backfill del `codigo`, que es mejora
 > y no requisito (§8).
 
-**La suite son 327 tests** (877 aserciones, 43 s) el 17/08/2026, sobre Postgres. Es la cifra
+**La suite son 396 tests** (1.141 aserciones, 65 s) el 18/08/2026, sobre Postgres. Es la cifra
 que hay que ver pasar antes de dar cualquier cosa por terminada, no la inspección del código.
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -1387,6 +1399,42 @@ lo fija: agrupar en SQL es lo que la mantiene en pie con el maestro entero delan
 **El color del porcentaje lo decide la configuración** desde el 17/08/2026, no la pantalla: ver
 la fase 11 y §8, donde se cerró qué pasaba con el rojo del «se pasa de la capacidad».
 
+**Pulsar el porcentaje abre de qué paquetes sale** (18/08/2026). El diálogo enseña la ocupación
+del día y la reparte en dos: lo que pasó **en la tanda de su propia ruta** (`type` nulo) y lo
+que le tocaba a esa ruta y **se recogió fuera de ella** (`tanda_de_otra_ruta` y
+`fuera_de_tanda`, juntos: son dos hallazgos distintos para la pantalla de incidencias, pero
+para «cuánto de este 11 % es suyo» son lo mismo). Tres decisiones:
+
+1. **Reparte el volumen de la celda, no otro.** Los filtros son los del agregado de la tabla
+   —jornada, UT y no retirados—, así que las dos partes suman exactamente el porcentaje del que
+   se abrió. Si aquí se colara otra condición, el diálogo contaría una historia que la tabla no
+   cuenta, y hay un test que fija que las dos ocupaciones suman la del día.
+
+2. **Manda el reparto en porcentaje del volumen del día** —los dos suman 100 %, que es la
+   pregunta que se hace al pulsar la cifra— y debajo, en pequeño, lo que cada parte ocupa de la
+   furgoneta, que es lo que suma el porcentaje de la tabla. Con las dos partes en porcentaje de
+   capacidad, un 6 % y un 6 % debajo de un 11 % parecerían un error de la pantalla: son dos
+   redondeos.
+
+3. **Aquí sí se dice la cobertura**, aunque la celda no la enseñe desde el 17/08/2026: el
+   reparto sólo puede salir de los envíos con volumen, y sin decirlo se leería como si cubriera
+   la jornada entera. Es un diálogo que se abre a propósito, no una tercera cifra en una tabla
+   que se lee en diagonal, que es lo que se quitó entonces.
+
+4. **Del diálogo se sale a la jornada de ese día**, con las rutas de esa UT abiertas y
+   resaltadas (`/incidents/<fecha>?ut=<nombre>`). La pregunta que sigue a «el 19 % acabó fuera
+   de su ruta» es siempre cuál se lo llevó, y eso ya lo contesta la pantalla de incidencias:
+   duplicar ahí el detalle por paquete habría sido una segunda versión de la misma tabla.
+   El resalte se explica solo en destino —«Resaltando las rutas de X · Ver todas»—, y dice
+   también cuando esa UT no llevó ninguna ruta ese día, que si no se lee como una pantalla
+   rota. La fila «Sin UT asignada» viaja como `?ut=sin-ut`: un `?ut=` vacío es «sin filtro», y
+   hace falta un valor. **El parámetro está escrito en las dos pantallas**, así que el test
+   recorre el enlace entero —abre el diálogo, sigue la URL y comprueba el resalte— en vez de
+   comparar cadenas: es lo único que impide que se separen.
+
+La consulta del reparto **sólo se hace con el diálogo abierto**: la tabla se sigue armando con
+sus cuatro, y hay un test para cada cosa.
+
 #### Orden de ataque
 
 ```
@@ -1589,9 +1637,10 @@ sería `/users` con otro nombre y con menos comprobaciones.
    —saber con qué correo has entrado sí es asunto de tu perfil— y el componente **no tiene
    propiedad `email`**, así que no es que el formulario lo esconda: es que no hay dónde
    recibirlo. Hay un test que lo comprueba con `property_exists`.
-   **Ojo con la letra pequeña**: hoy todos los usuarios ven `/users`, así que cualquiera puede
-   cambiarse el correo por ahí. La restricción del perfil es de diseño de la pantalla, no un
-   permiso. El día que haya roles, esto se convierte en uno.
+   **La letra pequeña, resuelta el 18/08/2026**: hasta entonces todos los usuarios veían
+   `/users`, así que cualquiera podía cambiarse el correo por ahí y la restricción del perfil
+   era de diseño de la pantalla, no un permiso. Con la fase 12 lo es: `/users` pide
+   `users.view` y cambiar un correo, `users.manage`.
 
 2. **Dos formularios y no uno.** Cambiar el nombre y cambiar la contraseña son gestos distintos
    con distinto riesgo: juntarlos obligaría a escribir la contraseña para corregir una tilde.
@@ -1702,13 +1751,14 @@ decisiones:
    un 79,6 % que la tabla enseña como «80 %» se quedaría fuera del tramo bueno por una décima
    que no se ve, y el color parecería un fallo de la pantalla.
 
-2. **El día que no llega al mínimo lleva icono de alerta**, no sólo color (17/08/2026). El
-   parámetro no es nuevo: es el `minimum_percent` que la fase 11 ya guardaba, renombrado a
-   **«Porcentaje mínimo de carga»** para que se lea como lo que es. Se reutilizó en vez de
-   añadir un segundo umbral porque un «mínimo de carga» aparte del «mínimo» del tramo malo
-   serían dos números que significan lo mismo y que alguien acabaría poniendo distintos. El
-   icono hereda el color del tramo por `currentColor` —lo sigue eligiendo el cliente— y su
-   texto dice de quién y de qué día es: se ve antes que la fila y la columna en las que está.
+2. **El día que no llega al mínimo lo dice sólo el color.** El 17/08/2026 llevó además un icono
+   de alerta delante de la cifra, y **el 18/08/2026 se quitó a petición**: en su sitio, pulsar
+   el porcentaje abre el desglose de la celda (ver «Calendario de capacidades»). El parámetro
+   sigue igual y es el que decide el tramo malo: es el `minimum_percent` que la fase 11 ya
+   guardaba, renombrado a **«Porcentaje mínimo de carga»** para que se lea como lo que es. Se
+   reutilizó en vez de añadir un segundo umbral porque un «mínimo de carga» aparte del «mínimo»
+   del tramo malo serían dos números que significan lo mismo y que alguien acabaría poniendo
+   distintos.
 
 3. **El rojo del «se pasa de la capacidad» no lo sustituye el color del tramo: conviven**, que
    era la duda anotada en §8. No podía sustituirlo porque son dos preguntas distintas —el tramo
@@ -1725,6 +1775,138 @@ decisiones:
 Sobre las consultas: `Setting::missingIn()` se separó de `missing()` para que la pantalla, que
 necesita **los valores para trabajar y lo que falta para avisar**, no pague dos consultas por la
 misma fila. La tabla sigue armándose con cuatro.
+
+### Fase 12 — Roles y permisos. Hecha el 18/08/2026
+
+Con `spatie/laravel-permission` (§5), a petición del cliente. **Dos roles y dos acciones por
+módulo**, ni uno más:
+
+| Rol | Qué lleva |
+|---|---|
+| **Administrador** | Todo el catálogo, que es como se define: «todos los permisos que existan». |
+| **Operaciones** | El maestro (rutas, UT, comercios), las incidencias y el calendario, más la auditoría y las configuraciones **en modo lectura**. Ni usuarios, ni roles, ni copias. |
+
+Son **los dos con los que nace** el panel; desde `GET /roles` el cliente crea los que quiera.
+
+`App\Support\PermissionCatalog` es la única fuente, como `SettingsCatalog` con los ajustes: de
+ahí salen los permisos que siembra `RolesAndPermissionsSeeder`, el desplegable del maestro de
+usuarios, el `can:` de cada ruta y lo que esconde la barra lateral. Añadir un módulo es una
+línea en el catálogo y volver a pasar el seeder.
+
+Cinco decisiones:
+
+1. **`view` y `manage`, y no un CRUD entero.** Hoy ninguna pantalla separa crear de editar, así
+   que `create` y `update` serían dos permisos que nadie pondría distintos. Lo único que se
+   distingue de verdad es mirar frente a escribir. Dos excepciones: `audit-logs` sólo tiene
+   `view` —el historial no se edita ni se borra nunca (§4)— y `backups` sólo tiene `manage`,
+   porque entrar en esa pantalla **ya es** poder descargarse la base entera (§10) y un permiso
+   de «sólo mirar» ahí no protegería de nada.
+
+2. **La ruta es la puerta, no la única cerradura.** Cada pantalla declara su `can:` en
+   `routes/web.php` —el del framework, porque el paquete registra los permisos en el `Gate`—,
+   pero **toda acción que escribe vuelve a comprobar su `.manage` dentro del componente**: a un
+   método de Livewire se llega desde el navegador aunque el Blade no pinte el botón. Está en
+   `CrudScreen::authorizeManage()` para los cuatro CRUD, y a mano en la jornada y en las
+   configuraciones. Hay un test que llama a `create`, `edit`, `delete` y `save` con una cuenta
+   de sólo lectura y espera cuatro 403.
+
+3. **Lo que no se puede ver se esconde, no se enseña apagado.** El menú filtra por permiso
+   (`layouts/app.blade.php`) y los botones de acción salen sólo con `manage`. Un enlace que
+   existe se pulsa igual, y la respuesta sería un 403 que parece un fallo del panel.
+
+4. **Una cuenta, un rol.** El paquete admite varios; con dos, «Administrador + Operaciones» no
+   dice nada que no diga ya «Administrador», y una lista de casillas invita a combinaciones que
+   nadie ha pensado. El modelo de datos aguanta varios el día que hagan falta. Y **no puedes
+   quitarte a ti mismo el Administrador**, por lo mismo que no puedes darte de baja (fase 8):
+   es quedarte fuera de tu propio panel sin poder volver a entrar a arreglarlo.
+
+5. **El cambio de rol se audita a mano.** Vive en la tabla pivote del paquete y los eventos de
+   Eloquent no lo ven, así que lo escribe `User::recordRoleChange()` (§4). Sin eso, «quién le
+   dio el Administrador a quién» no quedaría en ninguna parte, que es justo el cambio que más
+   importa poder mirar después. La consecuencia visible: un alta deja **dos** entradas en el
+   historial, la de la cuenta y la del rol.
+
+**Al desplegar hay que pasar el seeder** (`php artisan db:seed --class=RolesAndPermissionsSeeder`).
+Es idempotente y hace tres cosas: crea los permisos que falten, sincroniza los de cada rol
+—quitar uno del catálogo lo quita también de la base— y **da Administrador a toda cuenta que no
+tenga ninguna**. Esto último es deliberado: antes de la fase 12 no había roles y cualquiera
+entraba a todo, así que dejarlas sin rol sería echar del panel al equipo entero en el
+despliegue. Sólo alcanza a quien no tiene rol, para que repetirlo no le devuelva el
+Administrador a quien alguien acaba de bajar a Operaciones.
+
+En los tests, `Tests\TestCase` siembra el catálogo (`$seed`/`$seeder`) y **las cuentas de
+`UserFactory` nacen administradoras**: es lo que era todo el mundo antes de esto, así que los
+tests que no van de permisos siguen probando lo que probaban. Para lo demás están
+`->role(...)` y `->withoutRole()`.
+
+#### El maestro de roles y permisos (`GET /roles`)
+
+En **Sistema**, detrás de `roles.view` / `roles.manage`, que sólo lleva el Administrador: quien
+puede tocar los roles puede dárselo todo a sí mismo, así que va con las cuentas y las copias.
+
+**Dos maestros en una pantalla**, porque son la misma pregunta desde los dos lados: arriba los
+roles —qué lleva cada uno, en casillas agrupadas por módulo— y abajo los permisos que hay para
+repartir. La mitad de abajo nació el mismo día como una **leyenda de sólo lectura** —el catálogo
+con su descripción— y **se convirtió en un CRUD a petición** unas horas después.
+
+**Los permisos del código no se tocan.** `PermissionCatalog` siembra los que `routes/web.php` y
+las pantallas comprueban por su nombre: renombrar `merchants.manage` desde el panel dejaría esa
+comprobación mirando a un permiso que ya no existe y cerraría la pantalla para todos. Salen
+marcados «del código» y sin botones, y `savePermission` y `deletePermission` lo vuelven a
+comprobar. Los demás son del cliente enteros.
+
+**Un permiso que ningún código comprueba no abre ninguna puerta**, y eso hay que decirlo donde
+se crea: sirve para preparar el terreno de una pantalla que viene, no para inventar capacidades.
+Está escrito en el diálogo y en el pie de la tabla.
+
+Tres detalles del alta de un permiso:
+
+- **El nombre tiene forma**: `modulo.accion`, en minúsculas y con un punto (`regex`). La
+  pantalla agrupa por lo que va antes del punto y `can:` lo lee tal cual desde la ruta; un
+  nombre con espacios sería un permiso imposible de escribir donde hay que escribirlo.
+- **La descripción bajó a la base** (migración `add_description_to_permissions_table`). Vivía en
+  el catálogo, pero desde que hay permisos creados a mano el catálogo sólo explica la mitad. El
+  seeder la refresca en cada pasada para los del código: ahí el catálogo sigue mandando.
+- **El nuevo entra al Administrador en el acto.** Ese rol es «todos los permisos»; si esperase
+  al próximo despliegue habría un rato en el que ese «todos» sería mentira. Y por lo mismo, el
+  seeder resincroniza el Administrador contra **los permisos de la base**, no contra los del
+  catálogo: con la lista del catálogo, cada despliegue le quitaría los creados desde la
+  pantalla.
+
+Cuatro reglas, todas del mismo tipo que las que ya había en el maestro (§4):
+
+1. **El Administrador ni se edita ni se borra.** Es el rol que se define como «todos los
+   permisos» —lo resincroniza el seeder en cada despliegue— y es la única vuelta atrás si
+   alguien se equivoca configurando los demás. Se comprueba también en `save` y en `delete`, no
+   sólo escondiendo los botones.
+
+2. **Un rol con cuentas no se borra.** Es la misma regla que la de una ruta con comercios vivos:
+   borrarlo dejaría a esas cuentas sin rol —o sea, fuera del panel— sin decírselo a nadie.
+   Primero se les cambia el rol en Usuarios. Y **se borra de verdad**, no en pasivo: «tiene un
+   rol que ya no existe» no es un estado que ninguna pantalla sepa contar.
+
+3. **No puedes quitarle a tu propio rol el permiso de gestionar roles**, por lo mismo que no
+   puedes darte de baja ni quitarte el Administrador: es cerrar la puerta desde dentro.
+
+4. **Un rol sin permisos es legítimo**: sirve para aparcar una cuenta sin borrarla. La fila lo
+   dice con todas las letras —«no puede entrar a ninguna pantalla»— para que no parezca un rol a
+   medio configurar.
+
+**El cambio se audita.** `App\Models\Role` y `App\Models\Permission` extienden a los del
+paquete y sólo añaden `Auditable` (§4) —y la descripción, en el segundo—;
+`config/permission.php` apunta ahí, así que el paquete instancia los nuestros en todas partes.
+Los permisos de un rol son una pivote y los eventos de Eloquent no los ven, de modo que la lista
+la anota `Role::recordPermissionChange()`, igual que el rol de una cuenta. Crear o borrar un
+permiso cambia lo que la aplicación es capaz de comprobar, así que también deja rastro.
+
+**El seeder ya no pisa lo que se toque aquí.** Crea los permisos que falten, siembra un rol la
+primera vez y después **sólo resincroniza el Administrador**; si volviera a sincronizar
+Operaciones, cada despliegue desharía lo que el cliente hubiera cambiado. Hay un test que edita
+Operaciones, pasa el seeder y comprueba que el cambio sigue ahí.
+
+La pantalla **no usa `CrudScreen`**: ese trait está construido sobre `SoftDeletes` —baja pasiva,
+reactivación, «ver dados de baja»— y aquí no hay nada de eso. Se reutiliza lo que no depende de
+ello: `SendsToasts` y el cerrojo de doble envío.
 
 ## 8. Pendientes y decisiones abiertas
 
@@ -1822,9 +2004,10 @@ El CSV tiene cabecera `name,courier,pickup_route` y el seeder la verifica antes 
   `rutas.xlsx` ni el CSV derivado se versionan (§9).
 - `GET /api/rutas` devuelve el maestro completo. El token es lo único que lo protege:
   tratarlo como una contraseña.
-- **La pantalla de copias (§7, fase 7) es el permiso más fuerte del panel**, y hoy lo tiene
-  cualquiera que entre: no hay roles. Quien descarga una copia se lleva la base entera del
-  cliente en un fichero, y quien restaura una la sustituye. Mientras el panel lo use sólo el
-  equipo del cliente es asumible; el día que entre alguien más, esto es lo primero que hay que
-  poner detrás de un rol. La contraseña de la base nunca viaja en la línea de mandato: va por
+- **La pantalla de copias (§7, fase 7) es el permiso más fuerte del panel**, y desde el
+  18/08/2026 está detrás de uno: `backups.manage`, que sólo lleva el Administrador (§7, fase
+  12). Quien descarga una copia se lleva la base entera del cliente en un fichero, y quien
+  restaura una la sustituye; por eso ese módulo no tiene un permiso de «sólo ver», que ahí no
+  protegería de nada. La descarga (`/backups/download`) lo comprueba por su cuenta: es una ruta
+  normal y no pasa por el componente. La contraseña de la base nunca viaja en la línea de mandato: va por
   `PGPASSWORD`, porque los argumentos de un proceso los ve cualquiera con acceso a la máquina.

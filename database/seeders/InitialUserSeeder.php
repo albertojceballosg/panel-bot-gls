@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\AuditLog;
 use App\Models\User;
+use App\Support\PermissionCatalog;
 use Illuminate\Database\Seeder;
 use RuntimeException;
 
@@ -46,11 +47,17 @@ class InitialUserSeeder extends Seeder
             $user->deleted_at = null;
             $user->save();
 
+            // La cuenta de arranque es la única que hay: si naciera sin rol,
+            // el panel quedaría cerrado con la llave puesta. `assignRole` no
+            // duplica si ya lo tiene, así que repetir el seeder sigue valiendo
+            // para recuperar el acceso.
+            $user->assignRole(PermissionCatalog::ROLE_ADMIN);
+
             return $user;
         });
 
         // El email sí, la contraseña no: los logs y la salida de consola acaban
         // pegados en sitios que no controlamos.
-        $this->command?->info("  Usuario inicial listo: {$user->email}");
+        $this->command?->info("  Usuario inicial listo: {$user->email} (Administrador)");
     }
 }

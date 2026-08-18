@@ -3,9 +3,11 @@
 use App\Models\RunPackage;
 use App\Models\IncidentRun;
 use App\Support\IncidentPresenter;
+use App\Support\PermissionCatalog;
 use App\Support\SendsToasts;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Url;
 use Livewire\Component;
 
 /**
@@ -40,7 +42,23 @@ new #[Layout('components.layouts.app')] class extends Component
 {
     use SendsToasts;
 
+    /**
+     * En la fila «Sin UT asignada» del calendario de capacidades no hay nombre
+     * que poner en la URL, y un `?ut=` vacío es «sin filtro»: hace falta un
+     * valor. Si alguna vez existiera una UT llamada así, el centinela ganaría;
+     * es el único caso, y a cambio el enlace se lee.
+     */
+    public const SIN_UT = 'sin-ut';
+
     public IncidentRun $run;
+
+    /**
+     * La UT con la que se entró desde el calendario de capacidades: sus rutas
+     * llegan abiertas y resaltadas. Va en la query y no en el path porque es un
+     * resalte sobre esta misma jornada, no otra pantalla.
+     */
+    #[Url(as: 'ut', except: '')]
+    public string $courier = '';
 
     /** El paquete abierto en el diálogo de detalle, si hay alguno. */
     public ?int $selected = null;
@@ -55,6 +73,23 @@ new #[Layout('components.layouts.app')] class extends Component
     public function mount(string $date): void
     {
         $this->run = IncidentRun::where('run_date', $date)->firstOrFail();
+    }
+
+    public function clearCourier(): void
+    {
+        $this->courier = '';
+    }
+
+    /** Si esta ruta la llevaba aquel día la UT con la que se entró. */
+    private function highlighted(?string $courier): bool
+    {
+        if ($this->courier === '') {
+            return false;
+        }
+
+        return $this->courier === self::SIN_UT
+            ? $courier === null
+            : $courier === $this->courier;
     }
 
     public function show(int $id): void
@@ -78,11 +113,30 @@ new #[Layout('components.layouts.app')] class extends Component
      */
     public function manage(int $id): void
     {
+        $this->authorizeManagement();
+
         $paquete = $this->run->packages()->findOrFail($id);
 
         $this->managing = $paquete->id;
         $this->note = $paquete->handling_note ?? '';
         $this->handled = $paquete->isHandled();
+    }
+
+    /**
+     * Gestionar una incidencia —comentarla, darla por atendida— es escribir, y
+     * el `can:` de la ruta sólo deja entrar a leer la jornada (§7, fase 12).
+     */
+    private function authorizeManagement(): void
+    {
+        $this->authorize(PermissionCatalog::name('incidents', PermissionCatalog::MANAGE));
+    }
+
+    /** Si esta cuenta puede gestionar, para no ofrecer un botón que va a negarse. */
+    public function canManage(): bool
+    {
+        return (bool) auth()->user()?->can(
+            PermissionCatalog::name('incidents', PermissionCatalog::MANAGE)
+        );
     }
 
     public function cancelManagement(): void
@@ -102,6 +156,10 @@ new #[Layout('components.layouts.app')] class extends Component
      */
     public function saveHandling(): void
     {
+        // Otra vez aquí y no sólo al abrir el diálogo: entre lo uno y lo otro
+        // hay una ida al servidor, y a este método se llega desde el navegador.
+        $this->authorizeManagement();
+
         $this->validate([
             // Sin `required`: cerrar una incidencia sin comentario es legítimo,
             // y forzar a escribir algo sólo produce comentarios que dicen «ok».
@@ -142,10 +200,22 @@ new #[Layout('components.layouts.app')] class extends Component
 
         $incidencias = $paquetes->filter->isIncident();
 
+        $rutas = $this->porRuta($paquetes);
+
         return [
             'paquetes' => $paquetes,
             'incidencias' => $incidencias,
-            'rutas' => $this->porRuta($paquetes),
+            'rutas' => $rutas,
+
+            // De quién son las rutas resaltadas, ya en palabras, y cuántas ha
+            // resaltado: con cero hay que decirlo, o el resalte que no aparece
+            // se lee como una pantalla rota.
+            'utDestacada' => match ($this->courier) {
+                '' => null,
+                self::SIN_UT => 'Sin UT asignada',
+                default => $this->courier,
+            },
+            'destacadas' => $rutas->where('destacada', true)->count(),
 
             // Lo único accionable del día. Va en el balance de arriba y como
             // distintivo de cada ruta; el desglose por comercio se retiró el
@@ -181,6 +251,10 @@ new #[Layout('components.layouts.app')] class extends Component
                 return [
                     'nombre' => $nombre,
                     'mensajero' => $grupo->first()->assigned_courier_name,
+
+                    // Se entró desde el calendario de capacidades a mirar
+                    // justo esta ruta: llega abierta y marcada.
+                    'destacada' => $this->highlighted($grupo->first()->assigned_courier_name),
                     'paquetes' => $grupo->count(),
                     'total' => $incidencias->count(),
                     'firmes' => $incidencias->where('confidence', RunPackage::CONFIDENCE_HIGH)->count(),
@@ -375,7 +449,29 @@ new #[Layout('components.layouts.app')] class extends Component
          porque las incidencias ya están todas cargadas: abrir una ruta no tiene
          por qué costar una ida al servidor. --}}
     <section class="mb-6">
-        <h2 class="mb-2 text-sm font-semibold text-shell-900">Por ruta</h2>
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-sm font-semibold text-shell-900">Por ruta</h2>
+
+            {{-- De dónde se viene, cuando se entra desde una celda del
+                 calendario de capacidades. Con el aviso puesto, una jornada en
+                 la que esa UT no llevó nada se explica sola. --}}
+            @if ($utDestacada)
+                <p class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    @if ($destacadas > 0)
+                        Resaltando las rutas de
+                        <strong class="font-semibold text-shell-900">{{ $utDestacada }}</strong>
+                    @else
+                        <strong class="font-semibold text-shell-900">{{ $utDestacada }}</strong>
+                        no llevaba ninguna ruta en esta jornada
+                    @endif
+
+                    <button type="button" wire:click="clearCourier"
+                            class="font-medium text-brand-600 hover:text-brand-700">
+                        Ver todas
+                    </button>
+                </p>
+            @endif
+        </div>
 
         @if ($rutas->isEmpty())
             <x-ui.card padding="p-0">
@@ -384,8 +480,23 @@ new #[Layout('components.layouts.app')] class extends Component
             </x-ui.card>
         @else
             <div class="space-y-3">
+                @php $yaDesplazada = false; @endphp
+
                 @foreach ($rutas as $ruta)
-                    <x-ui.card padding="p-0" x-data="{ abierta: false }">
+                    @php
+                        // Sólo la primera se lleva el desplazamiento: con dos
+                        // rutas de la misma UT, la página saltaría dos veces.
+                        $desplazar = $ruta['destacada'] && ! $yaDesplazada;
+                        $yaDesplazada = $yaDesplazada || $ruta['destacada'];
+                    @endphp
+
+                    {{-- El `@if` no cabe entre los atributos de un componente
+                         —Blade los compila antes—, así que la condición del
+                         desplazamiento va dentro del propio `x-init`. --}}
+                    <x-ui.card padding="p-0"
+                               class="{{ $ruta['destacada'] ? 'ring-2 ring-brand-400' : '' }}"
+                               x-data="{ abierta: {{ $ruta['destacada'] ? 'true' : 'false' }} }"
+                               x-init="{{ $desplazar ? 'true' : 'false' }} && $nextTick(() => $el.scrollIntoView({ behavior: 'smooth', block: 'center' }))">
                         <button type="button" @click="abierta = ! abierta"
                                 x-bind:aria-expanded="abierta ? 'true' : 'false'"
                                 class="flex w-full items-center gap-3 px-5 py-4 text-left">
@@ -522,6 +633,7 @@ new #[Layout('components.layouts.app')] class extends Component
 
                                                         <td class="py-2 text-right">
                                                             <div class="flex justify-end gap-1">
+                                                                @if ($this->canManage())
                                                                 <x-ui.icon-button label="Comentar o marcar como atendida"
                                                                                   wire:click="manage({{ $fila->id }})">
                                                                     <svg class="size-4" fill="none" viewBox="0 0 24 24"
@@ -530,6 +642,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                                                               d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
                                                                     </svg>
                                                                 </x-ui.icon-button>
+                                                                @endif
 
                                                                 <x-ui.icon-button label="Ver el detalle del paquete"
                                                                                   wire:click="show({{ $fila->id }})">

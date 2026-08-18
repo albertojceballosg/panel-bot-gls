@@ -11,6 +11,10 @@ class DatabaseSeeder extends Seeder
 
     public function run(): void
     {
+        // Antes que el usuario inicial: sin los roles sembrados no habría
+        // ninguno que darle (§7, fase 12).
+        $this->call(RolesAndPermissionsSeeder::class);
+
         // Credenciales desde el .env, nunca desde el repo (CONTEXTO.md §10).
         $this->call(InitialUserSeeder::class);
 

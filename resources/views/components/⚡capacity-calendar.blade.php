@@ -40,6 +40,17 @@ new #[Layout('components.layouts.app')] class extends Component
     public string $week = '';
 
     /**
+     * La celda cuyo desglose está abierto: la UT y el día.
+     *
+     * Se guarda el nombre copiado —el mismo con el que se agrupa la tabla— y no
+     * un id: la fila puede ser de alguien que ya no está en el maestro, y '' es
+     * la de «Sin UT asignada». Las dos a null es el diálogo cerrado.
+     */
+    public ?string $detailCourier = null;
+
+    public ?string $detailDay = null;
+
+    /**
      * El lunes de la semana elegida.
      *
      * Explícito `Carbon::MONDAY` y no el del locale: la semana del cliente
@@ -80,6 +91,19 @@ new #[Layout('components.layouts.app')] class extends Component
         }
     }
 
+    /** Abre el desglose de una celda. `''` es la fila «Sin UT asignada». */
+    public function openDetail(?string $courier, string $day): void
+    {
+        $this->detailCourier = $courier ?? '';
+        $this->detailDay = $day;
+    }
+
+    public function closeDetail(): void
+    {
+        $this->detailCourier = null;
+        $this->detailDay = null;
+    }
+
     /**
      * Una fila de la tabla: los siete días y la cobertura.
      *
@@ -92,11 +116,15 @@ new #[Layout('components.layouts.app')] class extends Component
      * @param  Collection<int, Carbon>  $dias
      * @param  array{minimum: ?int, optimal: ?int}  $umbrales  Los de §7, fase 11.
      */
-    private function row(string $label, ?float $capacity, ?string $note, Collection $celdas, Collection $dias, array $umbrales): array
+    private function row(string $key, string $label, ?float $capacity, ?string $note, Collection $celdas, Collection $dias, array $umbrales): array
     {
         $porDia = $celdas->keyBy('dia');
 
         return [
+            // Con qué se pide el desglose de una celda: el nombre copiado con el
+            // que se agrupa, que no siempre es la etiqueta (la fila sin UT se
+            // enseña como «Sin UT asignada» y por dentro es '').
+            'key' => $key,
             'label' => $label,
             'capacity' => $capacity,
             'note' => $note,
@@ -160,6 +188,126 @@ new #[Layout('components.layouts.app')] class extends Component
         };
     }
 
+    /**
+     * De dónde sale la ocupación de una celda: cuánto de ese volumen es de
+     * paquetes que pasaron con su propia ruta y cuánto de paquetes que
+     * acabaron fuera de ella.
+     *
+     * **Reparte el mismo volumen que enseña la celda, no otro.** Los filtros
+     * son los del agregado de arriba —jornada, UT y no retirados—, así que las
+     * dos partes suman exactamente el porcentaje del que se abrió el diálogo;
+     * si aquí se colara otra condición, el desglose contaría una historia que
+     * la tabla no cuenta.
+     *
+     * `type` nulo es «pasó en la tanda de su ruta» (§3.1). Lo demás
+     * —`tanda_de_otra_ruta` y `fuera_de_tanda`— es volumen que le tocaba a esta
+     * ruta y no se recogió en ella, que es justo lo que se viene a mirar.
+     *
+     * La consulta sólo se hace con el diálogo abierto: la tabla se sigue
+     * armando con las cuatro de siempre.
+     *
+     * @param  Collection<int, Courier>  $maestro
+     * @return array<string, mixed>|null
+     */
+    private function detail(Collection $maestro): ?array
+    {
+        if ($this->detailCourier === null || $this->detailDay === null) {
+            return null;
+        }
+
+        // Las dos llegan por la red: un día imposible no puede ser un 500.
+        try {
+            $dia = Carbon::createFromFormat('Y-m-d', $this->detailDay)->startOfDay();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $ut = $this->detailCourier;
+
+        // Un `case` y no `type is null` a secas: así la clave llega ya como la
+        // etiqueta con la que se agrupa en PHP, sin depender de cómo devuelva
+        // el driver un booleano.
+        $reparto = "case when run_packages.type is null then 'own' else 'foreign' end";
+
+        $partes = RunPackage::query()
+            ->join('incident_runs', 'incident_runs.id', '=', 'run_packages.incident_run_id')
+            ->whereNull('run_packages.withdrawn_at')
+            ->where('incident_runs.run_date', $dia->toDateString())
+            ->when(
+                $ut === '',
+                fn ($q) => $q->whereNull('run_packages.assigned_courier_name'),
+                fn ($q) => $q->where('run_packages.assigned_courier_name', $ut),
+            )
+            ->groupByRaw($reparto)
+            ->selectRaw($reparto.' as parte')
+            ->selectRaw('sum(run_packages.volume_m3) as volumen')
+            ->selectRaw('count(*) as envios')
+            ->selectRaw('count(run_packages.volume_m3) as con_volumen')
+            ->get()
+            ->keyBy('parte');
+
+        // Ese día esa UT no movió nada: no hay celda de la que hablar.
+        if ($partes->isEmpty()) {
+            return null;
+        }
+
+        $capacidad = $maestro->firstWhere('name', $ut)?->maximum_volume;
+        $capacidad = $capacidad === null ? null : (float) $capacidad;
+
+        // Igual que en la celda: si el portal no dio ni un volumen, el total es
+        // «no lo sé» y no un cero (§3).
+        $medidas = $partes->filter(fn ($p) => $p->volumen !== null);
+        $total = $medidas->isEmpty() ? null : (float) $medidas->sum(fn ($p) => (float) $p->volumen);
+
+        $parte = function (string $clave, string $label, string $help) use ($partes, $total, $capacidad) {
+            $fila = $partes[$clave] ?? null;
+            $volumen = $fila === null || $fila->volumen === null ? null : (float) $fila->volumen;
+
+            return [
+                'label' => $label,
+                'help' => $help,
+
+                // Qué parte del volumen del día es. Es el reparto que se viene a
+                // ver, y por eso manda en el diálogo: los dos suman 100 %.
+                'share' => $volumen === null || $total === null || $total <= 0 ? null : $volumen / $total,
+
+                // Y con cuánto de la furgoneta carga cada parte, que es lo que
+                // suma el porcentaje de la tabla.
+                'usage' => $volumen === null || $capacidad === null || $capacidad <= 0 ? null : $volumen / $capacidad,
+
+                'volume' => $volumen,
+                'shipments' => $fila === null ? 0 : (int) $fila->envios,
+                'measured' => $fila === null ? 0 : (int) $fila->con_volumen,
+            ];
+        };
+
+        return [
+            'label' => $ut === '' ? 'Sin UT asignada' : $ut,
+            'day' => $dia,
+
+            // De aquí se sale a la jornada de ese día con las rutas de esta UT
+            // abiertas y resaltadas: el desglose dice cuánto volumen se recogió
+            // fuera de su ruta, y la pregunta siguiente es siempre cuál.
+            // `sin-ut` es el centinela de `⚡incident-run` para la fila de las
+            // rutas que aquel día no llevaba nadie; hay un test que recorre el
+            // enlace entero para que las dos pantallas no se separen.
+            'incidents' => route('incident-run', [
+                'date' => $dia->toDateString(),
+                'ut' => $ut === '' ? 'sin-ut' : $ut,
+            ]),
+
+            'capacity' => $capacidad,
+            'volume' => $total,
+            'usage' => $total === null || $capacidad === null || $capacidad <= 0 ? null : $total / $capacidad,
+            'shipments' => $partes->sum(fn ($p) => (int) $p->envios),
+            'measured' => $partes->sum(fn ($p) => (int) $p->con_volumen),
+            'parts' => [
+                $parte('own', 'De su ruta', 'Pasaron en la tanda de su propia ruta'),
+                $parte('foreign', 'Fuera de su ruta', 'Acabaron en la tanda de otra ruta o descolgados'),
+            ],
+        ];
+    }
+
     /** @return array<string, mixed> */
     public function with(): array
     {
@@ -207,6 +355,7 @@ new #[Layout('components.layouts.app')] class extends Component
 
         $filas = $maestro->map(fn (Courier $ut) => $this->row(
             $ut->name,
+            $ut->name,
             $ut->maximum_volume,
             null,
             $celdas[$ut->name] ?? $vacias,
@@ -222,6 +371,7 @@ new #[Layout('components.layouts.app')] class extends Component
             ->sort()
             ->map(fn (string $nombre) => $this->row(
                 $nombre,
+                $nombre,
                 null,
                 'Ya no está en el maestro',
                 $celdas[$nombre],
@@ -232,7 +382,7 @@ new #[Layout('components.layouts.app')] class extends Component
         // Y el volumen de las rutas que aquel día no llevaba nadie, por el mismo
         // motivo: es volumen que existió y tiene que verse en alguna fila.
         $sinUt = isset($celdas[''])
-            ? [$this->row('Sin UT asignada', null, 'Rutas que aquel día no llevaba nadie', $celdas[''], $dias, $umbrales)]
+            ? [$this->row('', 'Sin UT asignada', null, 'Rutas que aquel día no llevaba nadie', $celdas[''], $dias, $umbrales)]
             : [];
 
         return [
@@ -251,15 +401,15 @@ new #[Layout('components.layouts.app')] class extends Component
                 ->filter(fn (string $color) => (bool) preg_match('/^#[0-9a-fA-F]{6}$/', $color))
                 ->all(),
 
-            // El mínimo de carga, para poder decirlo en el aviso del día flojo:
-            // «por debajo del 60 %» sin el número no dice nada.
-            'minimo' => $umbrales['minimum'],
-
             'lunes' => $lunes,
             'domingo' => $domingo,
             'dias' => $dias,
             'corridas' => $corridas,
             'rows' => $filas->concat($huerfanas)->concat($sinUt)->values(),
+
+            // El desglose de la celda abierta, o null si no hay ninguna: sólo
+            // entonces se hace su consulta.
+            'detalle' => $this->detail($maestro),
             'esLaSemanaEnCurso' => $lunes->isSameDay(Carbon::today()->startOfWeek(Carbon::MONDAY)),
             'hayMaestro' => $maestro->isNotEmpty(),
         ];
@@ -404,22 +554,6 @@ new #[Layout('components.layouts.app')] class extends Component
                                                 // Null mientras la pantalla esté sin configurar, y
                                                 // entonces la cifra sale en el color de siempre.
                                                 $color = $colores[$celda['band']] ?? null;
-
-                                                // Por debajo del mínimo de carga configurado: ese
-                                                // día la UT salió más vacía de lo aceptable, y eso
-                                                // se marca en la celda además del color.
-                                                //
-                                                // El aviso dice de quién y de qué día es porque el
-                                                // icono se ve antes que la fila y la columna en las
-                                                // que está: leerlo tiene que bastar.
-                                                $floja = $celda['band'] === 'bad';
-
-                                                $avisoDeCargaBaja = $floja
-                                                    ? sprintf(
-                                                        '%s fue el %s por debajo del %d %% de carga mínima',
-                                                        $row['label'], $dia->format('d/m'), $minimo,
-                                                    )
-                                                    : null;
                                             @endphp
 
                                             {{-- El porcentaje arriba y el neto debajo, siempre en
@@ -430,23 +564,19 @@ new #[Layout('components.layouts.app')] class extends Component
                                                 <span class="block font-semibold text-slate-300"
                                                       title="Esta UT no tiene capacidad declarada">—</span>
                                             @else
-                                                <span @class(['block font-semibold', 'text-shell-900' => $color === null])
-                                                      @style(['color: '.$color => $color !== null])>
-                                                    {{-- El aviso de carga baja delante de la cifra:
-                                                         se busca recorriendo la columna, y detrás
-                                                         competía con la marca de exceso. El icono
-                                                         hereda el color del tramo malo, así que lo
-                                                         sigue eligiendo el cliente. --}}
-                                                    @if ($floja)
-                                                        <svg class="mr-0.5 inline-block size-3.5 align-[-0.15em]" fill="none"
-                                                             viewBox="0 0 24 24" stroke-width="2.2" stroke="currentColor"
-                                                             role="img" aria-label="{{ $avisoDeCargaBaja }}">
-                                                            <title>{{ $avisoDeCargaBaja }}</title>
-                                                            <path stroke-linecap="round" stroke-linejoin="round"
-                                                                  d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                                                        </svg>
-                                                    @endif
-
+                                                {{-- La cifra es un botón: al pulsarla se abre de
+                                                     qué paquetes sale ese porcentaje. Sustituye al
+                                                     icono de carga baja, que hasta el 18/08/2026
+                                                     iba delante del número; el tramo lo sigue
+                                                     diciendo el color. --}}
+                                                <button type="button"
+                                                        wire:click="openDetail(@js($row['key']), '{{ $dia->toDateString() }}')"
+                                                        title="Ver de qué paquetes sale este {{ $ocupacion($celda['usage']) }}"
+                                                        @class([
+                                                            'block w-full cursor-pointer text-right font-semibold underline-offset-4 hover:underline',
+                                                            'text-shell-900' => $color === null,
+                                                        ])
+                                                        @style(['color: '.$color => $color !== null])>
                                                     {{ $ocupacion($celda['usage']) }}
 
                                                     {{-- Que no cupiera en la furgoneta ya no puede
@@ -457,7 +587,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                                         <span class="align-middle text-amber-500"
                                                               title="Se pasa de la capacidad declarada">▲</span>
                                                     @endif
-                                                </span>
+                                                </button>
                                             @endif
 
                                             {{-- El volumen del que sale, en pequeño: el dato bruto
@@ -481,11 +611,86 @@ new #[Layout('components.layouts.app')] class extends Component
                 umbrales y los colores de
                 <a href="{{ route('settings', ['module' => 'capacity-calendar']) }}" wire:navigate
                    class="font-medium underline underline-offset-2">Configuraciones · Calendario de capacidades</a>.
-                El icono de alerta marca los días que quedaron por debajo del porcentaje mínimo de carga,
-                y el ▲, los que se pasan de la capacidad declarada de la furgoneta.
+                <strong>Pulsa un porcentaje</strong> para ver de qué paquetes sale —cuánto de ese volumen
+                pasó con su propia ruta y cuánto acabó fuera de ella— y saltar desde ahí a las
+                incidencias de ese día.
+                El ▲ marca los días que se pasan de la capacidad declarada de la furgoneta.
                 Cuando el portal no da el volumen de todos los envíos ese hueco no se suma como cero
                 —significaría «no lo sé»—, así que la ocupación real puede ser mayor que la que se ve.
             </div>
         @endif
     </x-ui.card>
+
+    {{-- De qué paquetes sale la ocupación de una celda. El reparto manda en
+         porcentaje del volumen del día —los dos suman 100 %, que es la pregunta
+         que se hace al pulsar la cifra— y debajo va, en pequeño, lo que cada
+         parte ocupa de la furgoneta, que es lo que suma el porcentaje de la
+         tabla. --}}
+    @if ($detalle)
+        <x-ui.modal :title="$detalle['label']"
+                    :description="ucfirst($detalle['day']->translatedFormat('l j \d\e F \d\e Y'))"
+                    close="closeDetail">
+            <div class="flex items-baseline justify-between gap-4 rounded-lg bg-slate-50 px-4 py-3">
+                <div>
+                    <p class="text-sm font-medium text-shell-900">Ocupación del día</p>
+                    <p class="text-xs text-slate-500">
+                        {{ $vol($detalle['volume']) }} m³
+                        @if ($detalle['capacity'] !== null)
+                            de {{ $vol($detalle['capacity']) }} m³ declarados
+                        @endif
+                        · {{ $detalle['shipments'] }} {{ $detalle['shipments'] === 1 ? 'envío' : 'envíos' }}
+                    </p>
+                </div>
+
+                <span class="text-2xl font-semibold text-shell-900 tabular-nums">
+                    {{ $detalle['usage'] === null ? '—' : $ocupacion($detalle['usage']) }}
+                </span>
+            </div>
+
+            <dl class="mt-4 divide-y divide-slate-100">
+                @foreach ($detalle['parts'] as $parte)
+                    <div class="flex items-baseline justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                        <dt class="min-w-0">
+                            <span class="text-sm font-medium text-shell-900">{{ $parte['label'] }}</span>
+                            <span class="block text-xs text-slate-500">{{ $parte['help'] }}</span>
+                        </dt>
+
+                        <dd class="text-right whitespace-nowrap tabular-nums">
+                            <span class="block text-lg font-semibold text-shell-900">
+                                {{ $parte['share'] === null ? '—' : $ocupacion($parte['share']) }}
+                            </span>
+                            <span class="block text-xs text-slate-400">
+                                {{ $vol($parte['volume']) }} m³ ·
+                                {{ $parte['shipments'] }} {{ $parte['shipments'] === 1 ? 'envío' : 'envíos' }}
+                                @if ($parte['usage'] !== null)
+                                    · {{ $ocupacion($parte['usage']) }} de la furgoneta
+                                @endif
+                            </span>
+                        </dd>
+                    </div>
+                @endforeach
+            </dl>
+
+            {{-- Sin esto el reparto se leería como si cubriera la jornada
+                 entera: un nulo del portal es «no lo sé» y no suma (§3), así
+                 que los envíos sin volumen no están en ninguna de las dos
+                 partes. --}}
+            @if ($detalle['measured'] < $detalle['shipments'])
+                <p class="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    El portal dio el volumen de {{ $detalle['measured'] }} de los
+                    {{ $detalle['shipments'] }} envíos del día, así que el reparto es el de esos.
+                </p>
+            @endif
+
+            <x-slot:footer>
+                <x-ui.button variant="secondary" wire:click="closeDetail">Cerrar</x-ui.button>
+
+                {{-- La pregunta que sigue al «19 % acabó fuera de su ruta» es
+                     cuál se lo llevó, y eso está en la jornada de ese día. --}}
+                <x-ui.button as="a" href="{{ $detalle['incidents'] }}" wire:navigate>
+                    Ver las incidencias del día
+                </x-ui.button>
+            </x-slot:footer>
+        </x-ui.modal>
+    @endif
 </div>

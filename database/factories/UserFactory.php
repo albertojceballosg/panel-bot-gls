@@ -3,6 +3,7 @@
 namespace Database\Factories;
 
 use App\Models\User;
+use App\Support\PermissionCatalog;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -35,6 +36,33 @@ class UserFactory extends Factory
             'password' => static::$password ??= Hash::make('password'),
             'remember_token' => Str::random(10),
         ];
+    }
+
+    /**
+     * Las cuentas de prueba nacen administradoras (§7, fase 12).
+     *
+     * Es lo que era todo el mundo antes de que hubiera roles, así que los tests
+     * que no van de permisos siguen probando lo mismo que probaban. Los que sí
+     * van de permisos piden el rol que quieren con `->role(...)`, que se aplica
+     * después y sustituye a éste.
+     */
+    public function configure(): static
+    {
+        return $this->afterCreating(
+            fn (User $user) => $user->assignRole(PermissionCatalog::ROLE_ADMIN),
+        );
+    }
+
+    /** Una cuenta con este rol y sólo con este. */
+    public function role(string $name): static
+    {
+        return $this->afterCreating(fn (User $user) => $user->syncRoles([$name]));
+    }
+
+    /** Una cuenta sin ningún rol: no puede entrar a ninguna pantalla. */
+    public function withoutRole(): static
+    {
+        return $this->afterCreating(fn (User $user) => $user->syncRoles([]));
     }
 
     /**

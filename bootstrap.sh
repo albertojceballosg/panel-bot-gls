@@ -92,6 +92,11 @@ paso "Clave de aplicación y migraciones"
 grep -q '^APP_KEY=.\+' .env || docker compose run --rm app php artisan key:generate
 docker compose run --rm app php artisan migrate --force
 
+# Roles y permisos: sin el catálogo sembrado no hay ningún permiso que conceder
+# y cualquier cuenta se queda en la puerta de todas las pantallas (CONTEXTO.md
+# §7, fase 12). Es idempotente, así que repetirlo no rompe nada.
+docker compose run --rm app php artisan db:seed --class=RolesAndPermissionsSeeder --force
+
 # --- 7. Arriba --------------------------------------------------------------
 paso "Levantando todo"
 docker compose up -d

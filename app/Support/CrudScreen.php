@@ -51,6 +51,34 @@ trait CrudScreen
     abstract protected function label(): string;
 
     /**
+     * A qué módulo del catálogo de permisos pertenece esta pantalla (§7, fase
+     * 12): de ahí sale el `.manage` que exige toda escritura.
+     */
+    abstract protected function permissionModule(): string;
+
+    // --- Permisos -----------------------------------------------------------
+
+    /**
+     * La cerradura de todo lo que escribe.
+     *
+     * Va aquí y no sólo en el Blade porque esconder un botón no protege nada:
+     * los métodos de un componente de Livewire se pueden llamar desde el
+     * navegador, y el `can:` de la ruta sólo dice que se puede *entrar*.
+     */
+    protected function authorizeManage(): void
+    {
+        $this->authorize(PermissionCatalog::name($this->permissionModule(), PermissionCatalog::MANAGE));
+    }
+
+    /** Si esta cuenta puede escribir aquí. Para decidir qué se ofrece en pantalla. */
+    public function canManage(): bool
+    {
+        return (bool) auth()->user()?->can(
+            PermissionCatalog::name($this->permissionModule(), PermissionCatalog::MANAGE)
+        );
+    }
+
+    /**
      * Si el nombre es femenino. En castellano no basta con interpolar el
      * sustantivo: «Ruta dado de baja» no lo dice nadie.
      */
@@ -97,6 +125,8 @@ trait CrudScreen
 
     public function create(): void
     {
+        $this->authorizeManage();
+
         $this->reset('editing', ...$this->formFields());
         $this->resetValidation();
         $this->showingForm = true;
@@ -104,6 +134,8 @@ trait CrudScreen
 
     public function edit(int $id): void
     {
+        $this->authorizeManage();
+
         $record = $this->model()::withTrashed()->findOrFail($id);
 
         $this->editing = $record->getKey();
@@ -127,6 +159,8 @@ trait CrudScreen
      */
     public function confirmDelete(int $id): void
     {
+        $this->authorizeManage();
+
         $this->confirmingDeletion = $id;
     }
 
@@ -145,6 +179,8 @@ trait CrudScreen
 
     public function delete(int $id): void
     {
+        $this->authorizeManage();
+
         $hecho = $this->transactionally(
             $this->lockKey('delete', $id),
             fn () => $this->model()::findOrFail($id)->delete(),
@@ -159,6 +195,8 @@ trait CrudScreen
 
     public function restore(int $id): void
     {
+        $this->authorizeManage();
+
         $hecho = $this->transactionally(
             $this->lockKey('restore', $id),
             fn () => $this->model()::onlyTrashed()->findOrFail($id)->restore(),

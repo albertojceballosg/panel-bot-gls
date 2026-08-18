@@ -53,6 +53,11 @@ new #[Layout('components.layouts.app')] class extends Component
         return 'UT';
     }
 
+    protected function permissionModule(): string
+    {
+        return 'couriers';
+    }
+
     protected function feminine(): bool
     {
         return true;
@@ -94,6 +99,9 @@ new #[Layout('components.layouts.app')] class extends Component
 
     public function save(): void
     {
+        // Esconder el botón no basta: a este método se llega desde el navegador.
+        $this->authorizeManage();
+
         // Validación en el servidor, con las reglas del modelo (§7, fase 1).
         $this->validate(Courier::rules($this->editing));
 
@@ -124,12 +132,15 @@ new #[Layout('components.layouts.app')] class extends Component
     <x-ui.page-header title="UT"
                       description="Quién conduce cada ruta hoy. Dar de baja a una UT no toca la ruta ni sus comercios.">
         <x-slot:actions>
-            <x-ui.button wire:click="create">
-                <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
-                Nueva UT
-            </x-ui.button>
+            {{-- Sin permiso de escritura, la pantalla se lee y ya (§7, fase 12). --}}
+            @if ($this->canManage())
+                <x-ui.button wire:click="create">
+                    <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    Nueva UT
+                </x-ui.button>
+            @endif
         </x-slot:actions>
     </x-ui.page-header>
 
@@ -160,7 +171,7 @@ new #[Layout('components.layouts.app')] class extends Component
                 <x-slot:actions>
                     @if ($search !== '')
                         <x-ui.button variant="secondary" wire:click="$set('search', '')">Quitar el filtro</x-ui.button>
-                    @else
+                    @elseif ($this->canManage())
                         <x-ui.button wire:click="create">Nueva UT</x-ui.button>
                     @endif
                 </x-slot:actions>
@@ -210,33 +221,35 @@ new #[Layout('components.layouts.app')] class extends Component
 
                                 <td class="px-6 py-3">
                                     <div class="flex justify-end gap-1">
-                                        @if ($courier->trashed())
-                                            <x-ui.icon-button label="Reactivar"
-                                                              wire:click="restore({{ $courier->id }})"
-                                                              wire:loading.attr="disabled">
-                                                <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                          d="M16.023 9.348h4.992V4.356M2.985 19.644v-4.992h4.992M19.5 9a7.5 7.5 0 00-13.02-3.02L2.985 9m0 6a7.5 7.5 0 0013.02 3.02l3.495-3.02" />
-                                                </svg>
-                                            </x-ui.icon-button>
-                                        @else
-                                            <x-ui.icon-button label="Editar"
-                                                              wire:click="edit({{ $courier->id }})"
-                                                              wire:loading.attr="disabled">
-                                                <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                          d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
-                                                </svg>
-                                            </x-ui.icon-button>
+                                        @if ($this->canManage())
+                                            @if ($courier->trashed())
+                                                <x-ui.icon-button label="Reactivar"
+                                                                  wire:click="restore({{ $courier->id }})"
+                                                                  wire:loading.attr="disabled">
+                                                    <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                              d="M16.023 9.348h4.992V4.356M2.985 19.644v-4.992h4.992M19.5 9a7.5 7.5 0 00-13.02-3.02L2.985 9m0 6a7.5 7.5 0 0013.02 3.02l3.495-3.02" />
+                                                    </svg>
+                                                </x-ui.icon-button>
+                                            @else
+                                                <x-ui.icon-button label="Editar"
+                                                                  wire:click="edit({{ $courier->id }})"
+                                                                  wire:loading.attr="disabled">
+                                                    <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                              d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                                                    </svg>
+                                                </x-ui.icon-button>
 
-                                            <x-ui.icon-button label="Dar de baja" variant="danger"
-                                                              wire:click="confirmDelete({{ $courier->id }})"
-                                                              wire:loading.attr="disabled">
-                                                <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                          d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                                                </svg>
-                                            </x-ui.icon-button>
+                                                <x-ui.icon-button label="Dar de baja" variant="danger"
+                                                                  wire:click="confirmDelete({{ $courier->id }})"
+                                                                  wire:loading.attr="disabled">
+                                                    <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                              d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                                    </svg>
+                                                </x-ui.icon-button>
+                                            @endif
                                         @endif
                                     </div>
                                 </td>

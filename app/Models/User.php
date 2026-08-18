@@ -3,6 +3,7 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Enums\AuditAction;
 use App\Models\Concerns\Auditable;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -13,6 +14,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
+use Spatie\Permission\Traits\HasRoles;
 
 #[Fillable(['name', 'last_name', 'email', 'password'])]
 #[Hidden(['password', 'remember_token'])]
@@ -21,7 +23,10 @@ class User extends Authenticatable
     /** @use HasFactory<UserFactory> */
     // El hash de la contraseña y el remember_token quedan fuera del
     // historial por el #[Hidden] de arriba: ver Auditable::auditExcludedFields().
-    use Auditable, HasFactory, Notifiable, SoftDeletes;
+    // `HasRoles` es de spatie/laravel-permission (§7, fase 12). Lo que puede
+    // cada cuenta sale de su rol; el catálogo de permisos, de
+    // `PermissionCatalog`.
+    use Auditable, HasFactory, HasRoles, Notifiable, SoftDeletes;
 
     /**
      * «Alberto Ceballos», o sólo el nombre si no consta el apellido.
@@ -32,6 +37,29 @@ class User extends Authenticatable
     public function fullName(): string
     {
         return trim($this->name.' '.$this->last_name);
+    }
+
+    /**
+     * Deja en el historial el cambio de rol (§4).
+     *
+     * El rol no es una columna de `users` sino una fila de la tabla pivote del
+     * paquete, así que los eventos de Eloquent no lo ven: sin esto, quién le dio
+     * el Administrador a quién no quedaría escrito en ninguna parte, y es
+     * justamente el cambio que más importa poder mirar después.
+     */
+    public function recordRoleChange(?string $before, ?string $after): void
+    {
+        if ($before === $after) {
+            return;
+        }
+
+        $this->writeAudit(AuditAction::Update, ['role' => $before], ['role' => $after]);
+    }
+
+    /** El rol de la cuenta, o null si todavía no tiene ninguno. */
+    public function roleName(): ?string
+    {
+        return $this->roles->first()?->name;
     }
 
     /**
@@ -73,6 +101,16 @@ class User extends Authenticatable
                 // correo por si vuelve, o si otra persona hereda la cuenta.
                 Rule::unique('users', 'email')->ignore($id)->whereNull('deleted_at'),
             ],
+
+            // Un rol y sólo uno. El paquete permite varios, pero con dos roles
+            // y ~5 cuentas, «Administrador + Operaciones» no significa nada que
+            // no signifique ya «Administrador», y una lista de casillas invita
+            // a combinaciones que nadie ha pensado. Si algún día hacen falta
+            // varios, el modelo de datos ya los aguanta.
+            // Contra la tabla y no contra el catálogo: desde que hay pantalla
+            // de roles (§7, fase 12) el cliente crea los suyos, y una lista fija
+            // aquí los daría por inválidos.
+            'role' => ['required', Rule::exists('roles', 'name')],
 
             // Obligatoria al crear y opcional al editar, donde vacío significa
             // «déjala como está»: la pantalla no puede enseñar la actual —es un

@@ -1,7 +1,9 @@
 <?php
 
+use App\Models\Role;
 use App\Models\User;
 use App\Support\CrudScreen;
+use App\Support\PermissionCatalog;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 
@@ -15,6 +17,12 @@ use Livewire\Component;
  * siempre: al editar, dejarla vacía significa «déjala como está». Enseñar la
  * actual es imposible —es un hash— y pedirla en cada cambio de correo invita a
  * poner una floja para salir del paso.
+ *
+ * **Una cuenta, un rol** (§7, fase 12). El paquete admite varios, pero con dos
+ * roles «Administrador + Operaciones» no dice nada que no diga ya
+ * «Administrador», y una lista de casillas invita a combinaciones que nadie ha
+ * pensado. Tampoco puedes quitarte a ti mismo el Administrador, por lo mismo que
+ * no puedes darte de baja: es la forma de quedarte fuera de tu propio panel.
  *
  * **Nadie se da de baja a sí mismo.** Eso va aquí y no en el modelo, a
  * diferencia de las reglas de `PickupRoute`: «a ti mismo» sólo significa algo
@@ -41,6 +49,9 @@ new #[Layout('components.layouts.app')] class extends Component
 
     public string $email = '';
 
+    /** El rol de la cuenta. Vacío es «todavía no has elegido», y no valida. */
+    public string $role = '';
+
     /** Vacía al editar significa «no la toques». Nunca se rellena desde la base. */
     public string $password = '';
 
@@ -53,7 +64,7 @@ new #[Layout('components.layouts.app')] class extends Component
 
     protected function formFields(): array
     {
-        return ['name', 'last_name', 'email', 'password', 'password_confirmation'];
+        return ['name', 'last_name', 'email', 'role', 'password', 'password_confirmation'];
     }
 
     protected function fillForm($record): void
@@ -61,6 +72,7 @@ new #[Layout('components.layouts.app')] class extends Component
         $this->name = $record->name;
         $this->last_name = $record->last_name ?? '';
         $this->email = $record->email;
+        $this->role = $record->roleName() ?? '';
 
         // La contraseña se queda en blanco a propósito: ver la cabecera.
         $this->password = '';
@@ -72,10 +84,18 @@ new #[Layout('components.layouts.app')] class extends Component
         return 'usuario';
     }
 
+    protected function permissionModule(): string
+    {
+        return 'users';
+    }
+
     public function with(): array
     {
         return [
+            // Los roles se traen con el listado: sin esto, pintar la columna
+            // sería una consulta por fila.
             'users' => User::query()
+                ->with('roles')
                 ->when($this->showingTrashed, fn ($q) => $q->withTrashed())
                 ->when($this->search !== '', fn ($q) => $q->where(fn ($q) => $q
                     ->where('name', 'ilike', $this->likeTerm())
@@ -84,6 +104,10 @@ new #[Layout('components.layouts.app')] class extends Component
                 ->orderBy('name')
                 ->orderBy('last_name')
                 ->paginate(self::POR_PAGINA),
+
+            // El desplegable sale de la tabla: los dos del catálogo y los que
+            // haya creado el cliente en Roles y permisos (§7, fase 12).
+            'roles' => Role::orderBy('name')->pluck('name'),
         ];
     }
 
@@ -110,7 +134,21 @@ new #[Layout('components.layouts.app')] class extends Component
 
     public function save(): void
     {
+        // Esconder el botón no basta: a este método se llega desde el navegador.
+        $this->authorizeManage();
+
         $this->validate(User::rules($this->editing));
+
+        // Quitarte a ti mismo el Administrador te deja fuera de media
+        // aplicación con la sesión abierta, y sin poder volver a entrar a
+        // arreglarlo. Que te lo quite otro.
+        if ($this->editing === auth()->id()
+            && auth()->user()->roleName() === PermissionCatalog::ROLE_ADMIN
+            && $this->role !== PermissionCatalog::ROLE_ADMIN) {
+            $this->toastError('No puedes quitarte a ti mismo el rol de Administrador. Que lo haga otro usuario.');
+
+            return;
+        }
 
         $editando = $this->editing !== null;
 
@@ -129,7 +167,20 @@ new #[Layout('components.layouts.app')] class extends Component
                 $usuario->password = $this->password;
             }
 
-            return $usuario->save();
+            $anterior = $usuario->exists ? $usuario->roleName() : null;
+
+            $guardado = $usuario->save();
+
+            // Dentro de la transacción y después del `save()`: una cuenta nueva
+            // no tiene id al que colgarle el rol hasta que existe, y si el rol
+            // fallara no puede quedar el usuario a medias.
+            $usuario->syncRoles([$this->role]);
+
+            // El rol vive en la tabla pivote del paquete, así que los eventos
+            // de Eloquent no lo ven: el historial lo escribe el modelo (§4).
+            $usuario->recordRoleChange($anterior, $this->role);
+
+            return $guardado;
         });
 
         if (! $hecho) {
@@ -145,12 +196,15 @@ new #[Layout('components.layouts.app')] class extends Component
     <x-ui.page-header title="Usuarios"
                       description="Las cuentas que entran al panel. No son el maestro del cliente: aquí no hay rutas ni comercios.">
         <x-slot:actions>
-            <x-ui.button wire:click="create">
-                <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
-                Nuevo usuario
-            </x-ui.button>
+            {{-- Sin permiso de escritura, la pantalla se lee y ya (§7, fase 12). --}}
+            @if ($this->canManage())
+                <x-ui.button wire:click="create">
+                    <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    Nuevo usuario
+                </x-ui.button>
+            @endif
         </x-slot:actions>
     </x-ui.page-header>
 
@@ -181,7 +235,7 @@ new #[Layout('components.layouts.app')] class extends Component
                 <x-slot:actions>
                     @if ($search !== '')
                         <x-ui.button variant="secondary" wire:click="$set('search', '')">Quitar el filtro</x-ui.button>
-                    @else
+                    @elseif ($this->canManage())
                         <x-ui.button wire:click="create">Nuevo usuario</x-ui.button>
                     @endif
                 </x-slot:actions>
@@ -193,6 +247,7 @@ new #[Layout('components.layouts.app')] class extends Component
                         <tr class="border-b border-slate-200 text-left text-xs tracking-wider text-slate-500 uppercase">
                             <th class="px-6 py-3 font-semibold">Usuario</th>
                             <th class="px-6 py-3 font-semibold">Correo</th>
+                            <th class="px-6 py-3 font-semibold">Rol</th>
                             <th class="px-6 py-3 font-semibold">Alta</th>
                             <th class="px-6 py-3"><span class="sr-only">Acciones</span></th>
                         </tr>
@@ -221,45 +276,59 @@ new #[Layout('components.layouts.app')] class extends Component
 
                                 <td class="px-6 py-3 text-slate-600">{{ $user->email }}</td>
 
+                                {{-- Una cuenta sin rol no puede pasar de la
+                                     portada: hay que verlo desde el listado. --}}
+                                <td class="px-6 py-3">
+                                    @if ($user->roleName())
+                                        <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                                            {{ $user->roleName() }}
+                                        </span>
+                                    @else
+                                        <span class="text-xs text-amber-700">sin rol</span>
+                                    @endif
+                                </td>
+
                                 <td class="px-6 py-3 text-slate-500">
                                     {{ $user->created_at?->translatedFormat('j M Y') ?? '—' }}
                                 </td>
 
                                 <td class="px-6 py-3">
                                     <div class="flex justify-end gap-1">
-                                        @if ($user->trashed())
-                                            <x-ui.icon-button label="Reactivar"
-                                                              wire:click="restore({{ $user->id }})"
-                                                              wire:loading.attr="disabled">
-                                                <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                          d="M16.023 9.348h4.992V4.356M2.985 19.644v-4.992h4.992M19.5 9a7.5 7.5 0 00-13.02-3.02L2.985 9m0 6a7.5 7.5 0 0013.02 3.02l3.495-3.02" />
-                                                </svg>
-                                            </x-ui.icon-button>
-                                        @else
-                                            <x-ui.icon-button label="Editar"
-                                                              wire:click="edit({{ $user->id }})"
-                                                              wire:loading.attr="disabled">
-                                                <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                          d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
-                                                </svg>
-                                            </x-ui.icon-button>
-
-                                            {{-- El de la propia sesión no lleva
-                                                 botón: el modelo lo prohíbe, y
-                                                 ofrecerlo para luego negarlo es
-                                                 una trampa. --}}
-                                            @unless ($user->is(auth()->user()))
-                                                <x-ui.icon-button label="Dar de baja" variant="danger"
-                                                                  wire:click="confirmDelete({{ $user->id }})"
+                                        @if ($this->canManage())
+                                            @if ($user->trashed())
+                                                <x-ui.icon-button label="Reactivar"
+                                                                  wire:click="restore({{ $user->id }})"
                                                                   wire:loading.attr="disabled">
                                                     <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
                                                         <path stroke-linecap="round" stroke-linejoin="round"
-                                                              d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                                              d="M16.023 9.348h4.992V4.356M2.985 19.644v-4.992h4.992M19.5 9a7.5 7.5 0 00-13.02-3.02L2.985 9m0 6a7.5 7.5 0 0013.02 3.02l3.495-3.02" />
                                                     </svg>
                                                 </x-ui.icon-button>
-                                            @endunless
+                                            @else
+                                                <x-ui.icon-button label="Editar"
+                                                                  wire:click="edit({{ $user->id }})"
+                                                                  wire:loading.attr="disabled">
+                                                    <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                              d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                                                    </svg>
+                                                </x-ui.icon-button>
+
+                                                {{-- El de la propia sesión no lleva
+                                                     botón: el modelo lo prohíbe, y
+                                                     ofrecerlo para luego negarlo es
+                                                     una trampa. --}}
+                                                @unless ($user->is(auth()->user()))
+                                                    <x-ui.icon-button label="Dar de baja" variant="danger"
+                                                                      wire:click="confirmDelete({{ $user->id }})"
+                                                                      wire:loading.attr="disabled">
+                                                        <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+                                                            <path stroke-linecap="round" stroke-linejoin="round"
+                                                                  d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                                        </svg>
+                                                    </x-ui.icon-button>
+                                                @endunless
+                                            @endif
                                         @endif
                                     </div>
                                 </td>
@@ -305,6 +374,17 @@ new #[Layout('components.layouts.app')] class extends Component
                             hint="Es con lo que entra al panel.">
                     <x-ui.input wire:model="email" id="email" type="email"
                                 :invalid="$errors->has('email')" autocomplete="off" />
+                </x-ui.field>
+
+                <x-ui.field label="Rol" for="role" :error="$errors->first('role')"
+                            hint="Decide a qué pantallas entra y qué puede tocar en ellas.">
+                    <x-ui.select wire:model="role" id="role" :invalid="$errors->has('role')">
+                        <option value="">Elige un rol…</option>
+
+                        @foreach ($roles as $rol)
+                            <option value="{{ $rol }}">{{ $rol }}</option>
+                        @endforeach
+                    </x-ui.select>
                 </x-ui.field>
 
                 <div class="grid gap-4 sm:grid-cols-2">

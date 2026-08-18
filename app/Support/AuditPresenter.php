@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\Courier;
 use App\Models\Merchant;
 use App\Models\PickupRoute;
+use App\Models\Role;
 use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Support\Carbon;
@@ -30,6 +31,7 @@ class AuditPresenter
         Courier::class => 'UT',
         Merchant::class => 'Comercios',
         User::class => 'Usuarios',
+        Role::class => 'Roles y permisos',
         Setting::class => 'Configuraciones',
     ];
 
@@ -41,6 +43,14 @@ class AuditPresenter
         'maximum_volume' => 'Volumen máximo (m³)',
         'pickup_route_id' => 'Ruta',
         'email' => 'Correo',
+
+        // Tampoco es una columna: lo escribe `Role::recordPermissionChange()`.
+        'permissions' => 'Permisos',
+
+        // No es una columna de `users`: lo escribe `User::recordRoleChange()`
+        // (§7, fase 12), porque el rol vive en la tabla pivote del paquete y
+        // los eventos de Eloquent no lo ven.
+        'role' => 'Rol',
         'email_verified_at' => 'Correo verificado',
         // De `settings`: la fila ya dice qué parámetro es en su nombre, así que
         // la columna sólo tiene que decir qué valor tomó.

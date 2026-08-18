@@ -2,7 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Enums\AuditAction;
 use App\Models\User;
+use App\Support\PermissionCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -52,6 +54,7 @@ class UsersCrudTest extends TestCase
             ->set('email', 'alberto@panel.local')
             ->set('password', 'una-contraseña-larga')
             ->set('password_confirmation', 'una-contraseña-larga')
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
             ->call('save')
             ->assertHasNoErrors();
 
@@ -76,6 +79,7 @@ class UsersCrudTest extends TestCase
             ->set('email', 'alberto@panel.local')
             ->set('password', 'una-contraseña-larga')
             ->set('password_confirmation', 'una-contraseña-larga')
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
             ->call('save')
             ->assertHasNoErrors();
 
@@ -95,6 +99,7 @@ class UsersCrudTest extends TestCase
             ->set('email', 'solo@panel.local')
             ->set('password', 'una-contraseña-larga')
             ->set('password_confirmation', 'una-contraseña-larga')
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
             ->call('save')
             ->assertHasErrors(['last_name' => 'required']);
 
@@ -144,6 +149,7 @@ class UsersCrudTest extends TestCase
             ->call('edit', $usuario->id)
             ->set('password', 'la-nueva-larga')
             ->set('password_confirmation', 'la-nueva-larga')
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
             ->call('save')
             ->assertHasNoErrors();
 
@@ -188,6 +194,7 @@ class UsersCrudTest extends TestCase
             ->call('create')
             ->set('password', 'corta')
             ->set('password_confirmation', 'otra')
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
             ->call('save')
             ->errors();
 
@@ -205,6 +212,7 @@ class UsersCrudTest extends TestCase
             ->set('email', 'alberto@panel.local')
             ->set('password', 'una-contraseña-larga')
             ->set('password_confirmation', 'otra-cosa')
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
             ->call('save')
             ->assertHasErrors(['password' => 'confirmed']);
     }
@@ -218,6 +226,7 @@ class UsersCrudTest extends TestCase
             ->set('email', 'alberto@panel.local')
             ->set('password', 'corta')
             ->set('password_confirmation', 'corta')
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
             ->call('save')
             ->assertHasErrors(['password']);
 
@@ -235,6 +244,7 @@ class UsersCrudTest extends TestCase
             ->set('email', 'ocupado@panel.local')
             ->set('password', 'una-contraseña-larga')
             ->set('password_confirmation', 'una-contraseña-larga')
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
             ->call('save')
             ->assertHasErrors(['email' => 'unique']);
     }
@@ -251,6 +261,7 @@ class UsersCrudTest extends TestCase
             ->set('email', 'sevuelve@panel.local')
             ->set('password', 'una-contraseña-larga')
             ->set('password_confirmation', 'una-contraseña-larga')
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
             ->call('save')
             ->assertHasNoErrors();
     }
@@ -367,13 +378,110 @@ class UsersCrudTest extends TestCase
             ->set('email', 'alberto@panel.local')
             ->set('password', 'una-contraseña-larga')
             ->set('password_confirmation', 'una-contraseña-larga')
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
             ->call('save')
             ->assertHasNoErrors();
 
-        $alta = User::where('email', 'alberto@panel.local')->sole()->auditLogs()->sole();
+        // Un alta deja dos entradas desde la fase 12: la del usuario y la del
+        // rol, que vive en la tabla pivote y no cabe en el volcado del modelo.
+        $alta = User::where('email', 'alberto@panel.local')->sole()
+            ->auditLogs()->where('action', AuditAction::Create)->sole();
 
         // Ni en claro ni hasheada: el historial se lee entero en pantalla.
         $this->assertArrayNotHasKey('password', $alta->after);
         $this->assertStringNotContainsString('una-contraseña-larga', json_encode($alta->after));
+    }
+
+    // --- El rol de la cuenta (§7, fase 12) -----------------------------------
+
+    public function test_a_new_account_is_created_with_the_role_it_was_given(): void
+    {
+        Livewire::test('users')
+            ->call('create')
+            ->set('name', 'Freddy')
+            ->set('last_name', 'GLS')
+            ->set('email', 'freddy@panel.local')
+            ->set('password', 'una-contraseña-larga')
+            ->set('password_confirmation', 'una-contraseña-larga')
+            ->set('role', PermissionCatalog::ROLE_OPERATIONS)
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $creado = User::where('email', 'freddy@panel.local')->sole();
+
+        $this->assertSame(PermissionCatalog::ROLE_OPERATIONS, $creado->roleName());
+        $this->assertTrue($creado->can('merchants.manage'));
+        $this->assertFalse($creado->can('backups.manage'));
+    }
+
+    public function test_the_role_is_required(): void
+    {
+        Livewire::test('users')
+            ->call('create')
+            ->set('name', 'Sin rol')
+            ->set('last_name', 'Ninguno')
+            ->set('email', 'sinrol@panel.local')
+            ->set('password', 'una-contraseña-larga')
+            ->set('password_confirmation', 'una-contraseña-larga')
+            ->call('save')
+            ->assertHasErrors(['role' => 'required']);
+
+        $this->assertSame(1, User::count());
+    }
+
+    public function test_an_invented_role_does_not_get_through(): void
+    {
+        Livewire::test('users')
+            ->call('create')
+            ->set('name', 'Listillo')
+            ->set('last_name', 'Del Panel')
+            ->set('email', 'listillo@panel.local')
+            ->set('password', 'una-contraseña-larga')
+            ->set('password_confirmation', 'una-contraseña-larga')
+            ->set('role', 'Dios')
+            ->call('save')
+            ->assertHasErrors(['role']);
+    }
+
+    public function test_changing_the_role_is_written_in_the_history(): void
+    {
+        // El rol vive en la tabla pivote del paquete, así que los eventos de
+        // Eloquent no lo ven: sin `recordRoleChange()`, quién le dio el
+        // Administrador a quién no quedaría escrito en ninguna parte (§4).
+        $otro = User::factory()->role(PermissionCatalog::ROLE_OPERATIONS)->create();
+
+        Livewire::test('users')
+            ->call('edit', $otro->id)
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $this->assertSame(PermissionCatalog::ROLE_ADMIN, $otro->refresh()->roleName());
+
+        $entrada = $otro->auditLogs()->where('action', AuditAction::Update)->sole();
+
+        $this->assertSame(['role' => PermissionCatalog::ROLE_OPERATIONS], $entrada->before);
+        $this->assertSame(['role' => PermissionCatalog::ROLE_ADMIN], $entrada->after);
+    }
+
+    public function test_you_cannot_take_your_own_administrator_away(): void
+    {
+        // Por lo mismo que no puedes darte de baja: es quedarte fuera de tu
+        // propio panel, y sin poder volver a entrar a arreglarlo.
+        Livewire::test('users')
+            ->call('edit', $this->yo->id)
+            ->set('role', PermissionCatalog::ROLE_OPERATIONS)
+            ->call('save');
+
+        $this->assertSame(PermissionCatalog::ROLE_ADMIN, $this->yo->refresh()->roleName());
+    }
+
+    public function test_the_listing_says_who_is_what(): void
+    {
+        User::factory()->role(PermissionCatalog::ROLE_OPERATIONS)->create(['name' => 'Freddy']);
+
+        Livewire::test('users')
+            ->assertSee(PermissionCatalog::ROLE_ADMIN)
+            ->assertSee(PermissionCatalog::ROLE_OPERATIONS);
     }
 }

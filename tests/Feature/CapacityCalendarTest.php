@@ -412,40 +412,20 @@ class CapacityCalendarTest extends TestCase
             ->assertDontSee('javascript:alert(1)', escape: false);
     }
 
-    public function test_a_day_below_the_minimum_load_is_flagged_with_a_warning(): void
+    public function test_a_day_below_the_minimum_load_is_only_marked_by_its_colour(): void
     {
         $this->configurada(minimo: 60, optimo: 85);
         Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
         $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0);
 
-        // El aviso dice de quién y de qué día es: el icono se ve antes que la
-        // fila y la columna en las que está.
-        Livewire::test('capacity-calendar')
+        // El icono de alerta del día flojo se quitó el 18/08/2026 a petición: la
+        // cifra la marca el color de su tramo, y pulsarla abre el desglose.
+        $componente = Livewire::test('capacity-calendar')
             ->assertSee('40 %')
-            ->assertSee('Freddy GLS fue el '.$this->lunes->format('d/m').' por debajo del 60 % de carga mínima');
-    }
-
-    public function test_a_day_above_the_minimum_load_is_not_flagged(): void
-    {
-        $this->configurada(minimo: 60, optimo: 85);
-        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
-        $this->package($this->runOn($this->lunes), 'Freddy GLS', 6.0);
-
-        Livewire::test('capacity-calendar')
-            ->assertSee('60 %')
-            ->assertDontSee('por debajo del 60 % de carga mínima');
-    }
-
-    public function test_without_a_minimum_configured_nothing_is_flagged_as_low(): void
-    {
-        // Sin umbral no hay con qué comparar, y un icono de alerta sin número
-        // detrás sería un aviso que nadie eligió (§7, fase 11).
-        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
-        $this->package($this->runOn($this->lunes), 'Freddy GLS', 0.5);
-
-        Livewire::test('capacity-calendar')
-            ->assertSee('5 %')
+            ->assertSee('color: #dc2626', escape: false)
             ->assertDontSee('de carga mínima');
+
+        $this->assertSame('bad', $this->fila($componente, 'Freddy GLS')['days'][$this->lunes->toDateString()]['band']);
     }
 
     public function test_a_day_over_the_capacity_is_marked_beyond_its_colour(): void
@@ -467,6 +447,177 @@ class CapacityCalendarTest extends TestCase
         Livewire::test('capacity-calendar')
             ->assertOk()
             ->assertSee('Todavía no hay UT');
+    }
+
+    // --- El desglose de una celda (18/08/2026) --------------------------------
+
+    public function test_clicking_a_percentage_splits_it_between_its_own_route_and_the_rest(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, 'Freddy GLS', 3.0);
+        $this->package($lunes, 'Freddy GLS', 1.0, ['type' => RunPackage::TYPE_OTHER_ROUTE]);
+        $this->package($lunes, 'Freddy GLS', 1.0, ['type' => RunPackage::TYPE_OUT_OF_BATCH]);
+
+        $detalle = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->viewData('detalle');
+
+        $this->assertSame('Freddy GLS', $detalle['label']);
+        $this->assertSame(5.0, $detalle['volume']);
+        $this->assertSame(0.5, $detalle['usage']);
+
+        [$propio, $ajeno] = $detalle['parts'];
+
+        // Lo que pasó en la tanda de su ruta —`type` nulo— frente a lo que le
+        // tocaba y se recogió fuera de ella, de los dos tipos (§3.1).
+        $this->assertSame(3.0, $propio['volume']);
+        $this->assertSame(0.6, $propio['share']);
+        $this->assertSame(1, $propio['shipments']);
+
+        $this->assertSame(2.0, $ajeno['volume']);
+        $this->assertSame(0.4, $ajeno['share']);
+        $this->assertSame(2, $ajeno['shipments']);
+
+        // Las dos partes reparten el mismo volumen que enseña la celda: sus
+        // ocupaciones suman el porcentaje del que se abrió el diálogo.
+        $this->assertSame(0.5, $propio['usage'] + $ajeno['usage']);
+    }
+
+    public function test_the_breakdown_only_looks_at_that_courier_and_that_day(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, 'Freddy GLS', 2.0);
+        $this->package($lunes, 'Otro', 9.0);
+        $this->package($lunes, 'Freddy GLS', 8.0, ['withdrawn_at' => now()]);
+        $this->package($this->runOn($this->lunes->copy()->addDay()), 'Freddy GLS', 7.0);
+
+        $detalle = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->viewData('detalle');
+
+        $this->assertSame(2.0, $detalle['volume']);
+        $this->assertSame(1, $detalle['shipments']);
+    }
+
+    public function test_the_breakdown_says_how_many_shipments_it_could_measure(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, 'Freddy GLS', 4.0);
+        $this->package($lunes, 'Freddy GLS', null, ['type' => RunPackage::TYPE_OTHER_ROUTE]);
+
+        $componente = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString());
+
+        $detalle = $componente->viewData('detalle');
+
+        // El nulo del portal no suma como cero (§3), así que el reparto sólo
+        // cubre parte de la jornada y el diálogo lo dice.
+        $this->assertSame(2, $detalle['shipments']);
+        $this->assertSame(1, $detalle['measured']);
+        $this->assertNull($detalle['parts'][1]['volume']);
+        $this->assertNull($detalle['parts'][1]['share']);
+
+        // El resto de la frase —«2 envíos del día»— cae en otra línea del Blade.
+        $componente->assertSee('El portal dio el volumen de 1 de los');
+    }
+
+    public function test_the_row_without_a_courier_can_be_broken_down_too(): void
+    {
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, null, 3.0);
+        $this->package($lunes, 'Freddy GLS', 9.0);
+
+        $detalle = Livewire::test('capacity-calendar')
+            ->call('openDetail', '', $this->lunes->toDateString())
+            ->viewData('detalle');
+
+        // Sin UT no hay capacidad con la que dividir, pero el reparto sigue
+        // teniendo sentido: es volumen que existió.
+        $this->assertSame('Sin UT asignada', $detalle['label']);
+        $this->assertSame(3.0, $detalle['volume']);
+        $this->assertNull($detalle['usage']);
+        $this->assertSame(1.0, $detalle['parts'][0]['share']);
+    }
+
+    public function test_a_cell_without_packages_opens_nothing(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->runOn($this->lunes);
+
+        Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertOk()
+            ->assertViewHas('detalle', null);
+    }
+
+    public function test_a_broken_day_in_the_breakdown_does_not_blow_up(): void
+    {
+        // Los dos parámetros llegan por la red: un día imposible no es un 500.
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', 'lo-que-sea')
+            ->assertOk()
+            ->assertViewHas('detalle', null);
+    }
+
+    public function test_the_breakdown_closes(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0);
+
+        Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertSee('Ocupación del día')
+            ->call('closeDetail')
+            ->assertSet('detailDay', null)
+            ->assertDontSee('Ocupación del día');
+    }
+
+    public function test_the_breakdown_leads_to_the_incidents_of_that_day_and_that_route(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, 'Freddy GLS', 3.0, ['assigned_route_name' => 'Ruta 3']);
+        $this->package($lunes, 'Otro', 3.0, ['assigned_route_name' => 'Ruta 1']);
+
+        $detalle = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertSee('Ver las incidencias del día')
+            ->viewData('detalle');
+
+        // Se recorre el enlace entero y no sólo su forma: son dos pantallas y
+        // el parámetro con el que se entienden vive escrito en las dos.
+        $this->get($detalle['incidents'])
+            ->assertOk()
+            ->assertSee('Resaltando las rutas de')
+            ->assertSee('Freddy GLS');
+    }
+
+    public function test_the_row_without_a_courier_also_leads_to_its_incidents(): void
+    {
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, null, 3.0, ['assigned_route_name' => 'Ruta 3']);
+
+        $detalle = Livewire::test('capacity-calendar')
+            ->call('openDetail', '', $this->lunes->toDateString())
+            ->viewData('detalle');
+
+        // El centinela de la fila «Sin UT asignada»: un `?ut=` vacío sería «sin
+        // filtro» y la jornada llegaría sin resaltar nada.
+        $this->assertStringContainsString('ut=sin-ut', $detalle['incidents']);
+
+        $this->get($detalle['incidents'])
+            ->assertOk()
+            ->assertSee('Resaltando las rutas de')
+            ->assertSee('Sin UT asignada');
     }
 
     // --- Consultas ------------------------------------------------------------
@@ -498,5 +649,24 @@ class CapacityCalendarTest extends TestCase
         // fase 11). Cuatro, y las mismas cuatro con 5 UT que con 50: la tabla se
         // arma en SQL, no fila a fila.
         $this->assertSame(4, $consultas);
+    }
+
+    public function test_the_breakdown_only_costs_a_query_when_it_is_open(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0);
+
+        $componente = Livewire::test('capacity-calendar');
+
+        $consultas = 0;
+        \DB::listen(function () use (&$consultas) {
+            $consultas++;
+        });
+
+        $componente->call('openDetail', 'Freddy GLS', $this->lunes->toDateString());
+
+        // Las cuatro de la tabla y una quinta, la del reparto: con el diálogo
+        // cerrado la pantalla no la paga.
+        $this->assertSame(5, $consultas);
     }
 }

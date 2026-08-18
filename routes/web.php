@@ -16,23 +16,43 @@ Route::middleware('guest')->group(function () {
     Route::livewire('/login', 'login')->name('login');
 });
 
+/*
+| Cada pantalla declara aquí el permiso con el que se entra (§7, fase 12). Se
+| usa el `can:` de Laravel y no el `permission:` del paquete porque
+| `spatie/laravel-permission` registra los permisos en el Gate: así la
+| comprobación es la del framework y no hay un alias más que recordar.
+|
+| **Es la puerta, no la única cerradura**: dentro de cada pantalla las acciones
+| que escriben vuelven a comprobar su `.manage`, porque un permiso de ver no
+| puede convertirse en uno de escribir por llegar a un método de Livewire.
+|
+| `home` y `profile` se quedan sin permiso a propósito: son la portada y la
+| cuenta de uno mismo, y quien entra al panel tiene las dos por definición.
+*/
 Route::middleware('auth')->group(function () {
     Route::livewire('/', 'home')->name('home');
-    Route::livewire('/pickup-routes', 'pickup-routes')->name('pickup-routes');
-    Route::livewire('/couriers', 'couriers')->name('couriers');
-    Route::livewire('/merchants', 'merchants')->name('merchants');
-    Route::livewire('/audit-logs', 'audit-logs')->name('audit-logs');
+    Route::livewire('/pickup-routes', 'pickup-routes')->name('pickup-routes')
+        ->middleware('can:pickup-routes.view');
+    Route::livewire('/couriers', 'couriers')->name('couriers')
+        ->middleware('can:couriers.view');
+    Route::livewire('/merchants', 'merchants')->name('merchants')
+        ->middleware('can:merchants.view');
+    Route::livewire('/audit-logs', 'audit-logs')->name('audit-logs')
+        ->middleware('can:audit-logs.view');
 
     // Operaciones: lo que sube el bot, no lo que mantiene el cliente.
-    Route::livewire('/incidents', 'incidents')->name('incidents');
+    Route::livewire('/incidents', 'incidents')->name('incidents')
+        ->middleware('can:incidents.view');
 
     // La fecha en la URL y no el id: es la clave natural de una jornada
     // (`incident_runs.run_date` es único) y hace el enlace legible.
-    Route::livewire('/incidents/{date}', 'incident-run')->name('incident-run');
+    Route::livewire('/incidents/{date}', 'incident-run')->name('incident-run')
+        ->middleware('can:incidents.view');
 
     // La semana va en la query (`?semana=`) y no en el path: es un filtro con
     // valor por defecto —la semana en curso—, no otra pantalla.
-    Route::livewire('/capacity-calendar', 'capacity-calendar')->name('capacity-calendar');
+    Route::livewire('/capacity-calendar', 'capacity-calendar')->name('capacity-calendar')
+        ->middleware('can:capacity-calendar.view');
 
     // La cuenta de uno mismo. Fuera de la barra lateral a propósito: se llega
     // desde el menú de la cabecera, que es donde se busca «mi cuenta».
@@ -42,11 +62,16 @@ Route::middleware('auth')->group(function () {
     // El módulo va en el path y no en la query porque cada uno es una pantalla
     // distinta, no un filtro sobre la misma; los válidos los decide
     // `SettingsCatalog`, y el resto es un 404.
-    Route::livewire('/settings/{module}', 'settings')->name('settings');
+    Route::livewire('/settings/{module}', 'settings')->name('settings')
+        ->middleware('can:settings.view');
 
     // Sistema: mantenimiento del panel, no del maestro.
-    Route::livewire('/users', 'users')->name('users');
-    Route::livewire('/backups', 'backups')->name('backups');
+    Route::livewire('/roles', 'roles')->name('roles')
+        ->middleware('can:roles.view');
+    Route::livewire('/users', 'users')->name('users')
+        ->middleware('can:users.view');
+    Route::livewire('/backups', 'backups')->name('backups')
+        ->middleware('can:backups.manage');
 
     // El volcado se genera y se manda al navegador en la misma petición. Ruta
     // normal y no acción de Livewire: una descarga la sirve el navegador, y
@@ -63,7 +88,7 @@ Route::middleware('auth')->group(function () {
         }
 
         return response()->download($ruta, $backups->filename())->deleteFileAfterSend();
-    })->name('backups.download');
+    })->middleware('can:backups.manage')->name('backups.download');
 
     // POST y no GET: un enlace de salida se puede disparar desde fuera, o lo
     // precarga el navegador.
