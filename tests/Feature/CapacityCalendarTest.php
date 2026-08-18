@@ -449,6 +449,86 @@ class CapacityCalendarTest extends TestCase
             ->assertSee('Todavía no hay UT');
     }
 
+    // --- Lo que enseña la celda (18/08/2026) ---------------------------------
+
+    public function test_the_cell_says_where_its_percentage_comes_from(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, 'Freddy GLS', 3.0);
+        $this->package($lunes, 'Freddy GLS', 2.0, ['type' => RunPackage::TYPE_OTHER_ROUTE]);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        // El reparto es en tanto por uno del día: los dos suman 1, que es lo que
+        // se lee al lado del porcentaje.
+        $this->assertSame(0.6, $celda['own']);
+        $this->assertSame(0.4, $celda['foreign']);
+        $this->assertSame(1, $celda['incidents']);
+
+        Livewire::test('capacity-calendar')
+            ->assertSee('50 %')
+            ->assertSee('60 %')
+            ->assertSee('40 %');
+    }
+
+    public function test_a_day_with_nothing_out_of_its_route_reads_as_a_hundred_per_cent_its_own(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 3.0);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        // Sin nada fuera, el lado que falta es un cero y no un «no lo sé»: aquí
+        // se reparte lo que sí se sabe.
+        $this->assertSame(1.0, $celda['own']);
+        $this->assertSame(0.0, $celda['foreign']);
+        $this->assertSame(0, $celda['incidents']);
+    }
+
+    public function test_the_net_volume_is_no_longer_printed_in_the_cell(): void
+    {
+        // Se quitó el 18/08/2026 a petición: sigue en la fila y en el diálogo,
+        // que es donde se va a cuadrar con incidencias.
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 3.75);
+
+        $componente = Livewire::test('capacity-calendar')->assertDontSee('3,75');
+
+        $this->assertSame(3.75, $this->fila($componente, 'Freddy GLS')['days'][$this->lunes->toDateString()]['volume']);
+
+        $componente->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())->assertSee('3,75');
+    }
+
+    public function test_every_cell_links_to_the_incidents_of_that_route_that_day(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 3.0, ['assigned_route_name' => 'Ruta 3']);
+
+        Livewire::test('capacity-calendar')
+            ->assertSee(route('incident-run', ['date' => $this->lunes->toDateString(), 'ut' => 'Freddy GLS']));
+    }
+
+    public function test_a_cell_without_a_declared_capacity_still_opens_and_splits(): void
+    {
+        // Sin capacidad no hay porcentaje, pero el día movió volumen y sin el
+        // neto en la celda ésa sería la única forma de contar lo que pasó.
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, 'Quien se fue', 3.0);
+        $this->package($lunes, 'Quien se fue', 1.0, ['type' => RunPackage::TYPE_OUT_OF_BATCH]);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Quien se fue')['days'][$this->lunes->toDateString()];
+
+        $this->assertNull($celda['usage']);
+        $this->assertSame(0.75, $celda['own']);
+        $this->assertSame(0.25, $celda['foreign']);
+
+        Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Quien se fue', $this->lunes->toDateString())
+            ->assertSee('Ocupación del día');
+    }
+
     // --- El desglose de una celda (18/08/2026) --------------------------------
 
     public function test_clicking_a_percentage_splits_it_between_its_own_route_and_the_rest(): void

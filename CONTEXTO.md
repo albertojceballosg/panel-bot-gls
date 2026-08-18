@@ -645,7 +645,7 @@ docker compose logs -f vite
 > Lo único que queda abierto de la 6 a la 11 es **6.D**, el backfill del `codigo`, que es mejora
 > y no requisito (§8).
 
-**La suite son 396 tests** (1.141 aserciones, 65 s) el 18/08/2026, sobre Postgres. Es la cifra
+**La suite son 426 tests** (1.254 aserciones, 166 s) el 18/08/2026, sobre Postgres. Es la cifra
 que hay que ver pasar antes de dar cualquier cosa por terminada, no la inspección del código.
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -1378,15 +1378,30 @@ Cuatro decisiones que no son de estilo:
    a una fila «Sin UT asignada». Si no, la suma de la semana no cuadraría con la de incidencias
    y nadie sabría por qué.
 
-La cifra de cada día es **qué parte de la furgoneta ocupó** —con el neto en m³ **debajo**, en
-pequeño, que sigue haciendo falta para cuadrar con incidencias—: la suma del día entre
+La cifra de cada día es **qué parte de la furgoneta ocupó**: la suma del día entre
 `couriers.maximum_volume`. Es la lectura que se busca —4 m³ es mucho o poco según quién los
-lleve— y por encima del 100 % es un día que no cabía. Las dos cifras estuvieron en la misma
-línea hasta el **17/08/2026**: una al lado de la otra competían, y el porcentaje va siempre
-arriba porque es el que se lee en diagonal. Sin capacidad declarada no hay entre qué
+lleve— y por encima del 100 % es un día que no cabía. Sin capacidad declarada no hay entre qué
 dividir, así que sale un guion; una capacidad de cero se trata igual, porque es un dato mal
 metido y no un divisor. **Sustituyó a la media semanal el 14/08/2026**, que respondía a otra
 pregunta: la media decía cuánto carga una UT y esto dice si el día le cabe.
+
+**Al lado del porcentaje, entre paréntesis, de dónde sale** (18/08/2026): qué parte de ese
+volumen pasó con su propia ruta y qué parte acabó fuera de ella —suman el 100 %—, con el segundo
+en ámbar sólo cuando existe, para que un día limpio no lleve un color de aviso. Y un **triángulo
+que lleva a las incidencias de esa ruta ese día** (`?ut=`, ver el diálogo más abajo), ámbar
+cuando hubo paquetes fuera de la ruta y gris cuando no: está siempre, pero sólo llama la
+atención si hay algo que mirar.
+
+**El neto en m³ salió de la celda ese mismo día, a petición.** Estuvo en la misma línea que el
+porcentaje hasta el 17/08/2026 —competían—, debajo y en pequeño hasta el 18/08, y ahora vive
+sólo en el diálogo, que es donde se va a cuadrar con incidencias. La fila lo sigue calculando y
+llega a la vista; volver a pintarlo es una línea de Blade, y hay un test que fija que hoy no se
+ve para que quitarlo haya sido una decisión y no una pérdida silenciosa. **Con esto, una UT sin
+capacidad declarada se quedaba con una celda muda**, así que su guion también abre el diálogo.
+
+El reparto **sale del mismo agregado que la tabla**: la consulta agrupa además por
+`type is null`, así que son dos filas por UT y día que se pliegan en PHP en una. Sigue siendo
+una sola consulta, y el test de las cuatro lo fija.
 
 Un día sin corrida se marca como tal —no es un día sin
 trabajo— y uno con la corrida no fiable, también. La tabla entera se arma con **cuatro
@@ -1615,12 +1630,108 @@ Cuatro columnas nuevas en `run_packages`: `handled_at`, `handled_by`, `handled_b
    el bot cientos de veces al día y ahogaría el historial—; el rastro de quién atendió qué son
    estas cuatro columnas.
 
-El comentario **no es obligatorio** para cerrar una incidencia: exigirlo sólo produce
-comentarios que dicen «ok». El diálogo de gestión es distinto del de detalle a propósito: uno se
+**El comentario y la atención van juntos** (18/08/2026, a petición). No se puede guardar un
+comentario dejando la incidencia abierta, y **desmarcarla borra el que tuviera**. El comentario
+dice *qué se hizo*: comentada y sin atender era un estado que no significaba nada y que nadie
+sabía leer en el listado —hasta ese día se pintaba como «Con comentario»—. El borrado al reabrir
+es sin preguntar y aunque el campo del diálogo siga lleno; si no, reabrir obligaría a vaciar el
+texto a mano para no chocar con la primera mitad de la regla, y el diálogo lo avisa antes de
+guardar. El distintivo «Con comentario» **se queda en el listado**: las filas escritas antes de
+la regla lo tienen y hay que saber leerlas.
+
+La misma regla vale **en lote**, pero sólo cuando alguna de las marcadas se quedaría abierta:
+comentar de una vez sobre incidencias ya atendidas —un repaso— sigue valiendo.
+
+Y **guardar sin haber tocado nada se rechaza**, en los dos diálogos: hasta el 18/08/2026 el de
+una sola cerraba con un «Incidencia actualizada» que no era verdad, y el del lote decía «N
+incidencias actualizadas» sin haber tocado ninguna. Ahora dicen qué falta. Los mensajes de
+validación nombran el campo en castellano (`attributes: ['note' => 'comentario']`); «El campo
+note» no lo entiende nadie, y esto se lee en pantalla.
+
+Lo que **no** cambió: el comentario **no es obligatorio** para cerrar una incidencia. Exigirlo
+sólo produce comentarios que dicen «ok». El diálogo de gestión es distinto del de detalle a propósito: uno se
 abre para mirar y el otro para escribir, y mezclarlos convierte una consulta en un formulario.
 El id del paquete llega del cliente, así que se busca **dentro de la jornada** (`$run->packages()
 ->findOrFail()`) y no con un `find` suelto; hay un test que lo comprueba con el paquete de otro
 día. Primitiva nueva: `ui/textarea`, gemela de `ui/input`.
+
+#### Abrir un diálogo dejó de costar la jornada entera (18/08/2026)
+
+Con un día real —168 incidencias y ~490 paquetes correctos— **abrir o cerrar un modal tardaba
+~640 ms y devolvía 2 MB de HTML**. No era la consulta: era que Livewire vuelve a pintar el
+componente entero en cada petición, así que cambiar `managing` de `null` a un id rehidrataba los
+650 paquetes, los reagrupaba y repintaba las ~650 filas con sus SVG. Medido antes de tocar nada,
+y otra vez después: **27 ms y 12 KB**.
+
+Tres cambios, y el orden importa porque cada uno depende del anterior:
+
+1. **El listado por ruta es una isla** (`@island('rutas')`, de Livewire 4), y los traspasos,
+   otra. Una isla no se vuelve a pintar salvo que se le pida, así que un diálogo que se abre no
+   la toca. Como no se pinta sola, **hay que pedírselo cuando cambia lo que enseña**:
+   `refreshListing()` tras guardar una gestión o un lote, porque los distintivos de cada fila y
+   los contadores de cada ruta viven ahí dentro. Hay un test que lo fija por los dos lados: al
+   abrir un diálogo no viaja ningún trozo de isla, y al guardar sí y trae «Atendida».
+
+2. **Lo caro pasó a propiedades calculadas** (`#[Computed] paquetes/incidencias/rutas/
+   traspasos`) y salió de `with()`. Es lo que hace que la isla saltada no cueste **nada**: si
+   nadie las toca, la consulta no se hace. `with()` se quedó con lo que sí necesita cada
+   petición, y el balance de arriba —incidencias, firmes, sin atender— se calcula ahora con un
+   `count(*) filter (where …)` en vez de contando una colección que ya no se carga. Hay un test
+   que comprueba que ninguna consulta de abrir el diálogo trae la lista de paquetes.
+
+3. **La selección del lote vive en el navegador.** Estaba con `wire:model.live`, así que
+   **marcar una casilla costaba lo mismo que abrir un diálogo**: una ida al servidor con toda la
+   jornada detrás. Ahora es un `x-data` de Alpine en la raíz —el resalte de la fila, la casilla
+   de cabecera y la barra de abajo se resuelven ahí— y los ids sólo viajan al pulsar «Gestionar
+   juntas», que los pasa como argumento. El servidor sigue sin creérselos: `seleccionadas()` los
+   vuelve a consultar contra la jornada.
+
+**La trampa de las islas, y costó un rato encontrarla:** un `wire:click` **dentro** de una isla
+le dice a Livewire que repinte *sólo esa isla*, y los dos diálogos de la pantalla viven fuera de
+ella. Con las islas puestas, el icono de comentar dejó de abrir el modal: la petición salía, se
+guardaba el estado y volvía sólo el trozo del listado. Por eso los botones de cada fila llaman
+por **`$wire.manage(...)` / `$wire.show(...)`** desde Alpine: una llamada por `$wire` no lleva
+elemento de origen, así que no lleva isla, y se repinta todo **menos** las islas — que es justo
+lo barato. Hay un test que lo fija por si alguien los devuelve a `wire:click`.
+
+**Lo que no se ha tocado**: la primera carga de la página sigue costando lo que cuesta pintar el
+día entero (~780 ms con 650 paquetes). Ahí el HTML hay que generarlo una vez sí o sí; si algún
+día molesta, lo siguiente es paginar dentro de cada ruta, no otra isla.
+
+#### Gestión en lote (18/08/2026)
+
+Un lote de paquetes del mismo comercio pasa por la cinta en segundos y arrastra **exactamente la
+misma incidencia**: cerrarlas de una en una es escribir el mismo comentario quince veces. Cada
+fila lleva su casilla, la cabecera de cada lista marca la sección entera —el lote suele ser
+justo eso—, y con algo marcado aparece abajo una barra fija con «Gestionar juntas». Va fija y no
+dentro de una tabla porque se marcan filas de dos listas y de secciones distintas.
+
+**Una incidencia atendida no lleva casilla**, y si en una lista no queda ninguna pendiente
+tampoco la lleva su cabecera: gestionar en lote es cerrar, y ofrecer la casilla de algo ya
+cerrado invita a marcarlo para nada. La celda sí se queda, vacía, o la fila se correría una
+columna. **Sin
+recuento**, a petición del mismo día: las filas marcadas ya se ven resaltadas, y la cifra la
+vuelve a decir el diálogo justo antes de escribir en todas. Marcar y desmarcar **no toca el
+servidor**: ver el apartado anterior.
+
+Tres reglas, y las tres **se apartan a propósito** de las del diálogo de una sola:
+
+1. **La selección se consulta, no se cree.** Los ids llegan del navegador, así que
+   `seleccionadas()` filtra por jornada, por que sean incidencias —un paquete correcto no se
+   «atiende»— y por no retiradas. Hay un test que manda el id de otra jornada y el de un paquete
+   correcto y comprueba que ninguno se toca.
+
+2. **Un comentario en blanco no borra nada.** En el diálogo de una sola, vaciar el campo es
+   querer quitar el comentario; en lote sería un accidente —se marcan quince, se cierran sin
+   escribir— y se perderían los comentarios que ya tuvieran.
+
+3. **El interruptor sólo cierra; nunca reabre.** Sin marcar significa «no toques el estado». En
+   lote, reabrir borraría fecha, autor y nombre de incidencias atendidas hace semanas, y eso se
+   pide de una en una, mirándolas. Lo que ya estaba atendido conserva su fecha y su autor.
+
+La escritura va en una transacción: medio lote cerrado y medio no es peor que no haber cerrado
+nada, porque nadie sabría dónde se quedó. Y todo esto pide `incidents.manage` (§7, fase 12): sin
+él no se pintan ni las casillas, y llamar a los métodos a mano responde 403.
 
 ### Fase 10 — Mi perfil. Hecha el 14/08/2026
 

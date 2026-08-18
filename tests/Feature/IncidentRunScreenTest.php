@@ -21,10 +21,15 @@ class IncidentRunScreenTest extends TestCase
 {
     use RefreshDatabase, MakesIncidents;
 
+    /** Quien mira la jornada: hace falta su nombre para lo que firma al atender. */
+    private User $user;
+
     protected function setUp(): void
     {
         parent::setUp();
-        $this->actingAs(User::factory()->create());
+
+        $this->user = User::factory()->create();
+        $this->actingAs($this->user);
     }
 
     private function url(string $date = '2026-08-03'): string
@@ -351,24 +356,87 @@ class IncidentRunScreenTest extends TestCase
 
     // --- Gestión de la incidencia (14/08/2026) --------------------------------
 
-    public function test_it_saves_a_comment_without_closing_the_incident(): void
+    public function test_a_comment_cannot_be_saved_leaving_the_incident_open(): void
+    {
+        // Regla del 18/08/2026: el comentario dice *qué se hizo*, así que una
+        // incidencia comentada y sin atender era un estado que no significaba
+        // nada. Hasta ese día se guardaba y el listado lo pintaba como «Con
+        // comentario».
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->set('note', 'Hablado con la UT: se confundió de jaula.')
+            ->call('saveHandling')
+            ->assertHasErrors('handled');
+
+        $incidencia->refresh();
+
+        $this->assertNull($incidencia->handling_note);
+        $this->assertNull($incidencia->handled_at);
+    }
+
+    public function test_the_comment_is_saved_together_with_the_closing(): void
     {
         $corrida = $this->storedRun();
         $incidencia = $this->incident($corrida, '1');
 
-        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
             ->call('manage', $incidencia->id)
             ->set('note', 'Hablado con la UT: se confundió de jaula.')
+            ->set('handled', true)
             ->call('saveHandling')
             ->assertHasNoErrors();
 
         $incidencia->refresh();
 
-        // Comentar no es atender: alguien la está mirando, y eso no es lo mismo
-        // que haberla cerrado.
         $this->assertSame('Hablado con la UT: se confundió de jaula.', $incidencia->handling_note);
+        $this->assertTrue($incidencia->isHandled());
+    }
+
+    public function test_closing_without_a_comment_is_still_legitimate(): void
+    {
+        // Lo que no cambió: exigir un comentario para cerrar sólo produce
+        // comentarios que dicen «ok».
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->set('handled', true)
+            ->call('saveHandling')
+            ->assertHasNoErrors();
+
+        $this->assertTrue($incidencia->refresh()->isHandled());
+        $this->assertNull($incidencia->handling_note);
+    }
+
+    public function test_reopening_an_incident_wipes_its_comment_too(): void
+    {
+        // Decía qué se hizo, y ya no hay nada hecho. Se borra sin preguntar y
+        // aunque el campo siga lleno: si no, reabrir obligaría a vaciar el
+        // texto a mano y chocaría con la regla de arriba.
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+        $incidencia->forceFill([
+            'handled_at' => now(),
+            'handled_by' => auth()->id(),
+            'handled_by_name' => 'Quien fuera',
+            'handling_note' => 'Hablado con la UT.',
+        ])->save();
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->assertSet('note', 'Hablado con la UT.')
+            ->set('handled', false)
+            ->call('saveHandling')
+            ->assertHasNoErrors();
+
+        $incidencia->refresh();
+
+        $this->assertNull($incidencia->handling_note);
         $this->assertNull($incidencia->handled_at);
-        $this->assertFalse($incidencia->isHandled());
     }
 
     public function test_marking_it_handled_records_who_and_when(): void
@@ -442,6 +510,65 @@ class IncidentRunScreenTest extends TestCase
         $this->assertNull($incidencia->handled_by_name);
     }
 
+    public function test_saving_without_changing_anything_says_so(): void
+    {
+        // Antes cerraba el diálogo con un «Incidencia actualizada» que no era
+        // verdad: no se había tocado nada.
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->call('saveHandling')
+            ->assertHasErrors('handled')
+            ->assertSee('No has cambiado nada')
+            // Y el diálogo se queda abierto, con la incidencia como estaba.
+            ->assertSet('managing', $incidencia->id);
+
+        $this->assertNull($incidencia->refresh()->handled_at);
+    }
+
+    public function test_a_batch_without_a_comment_and_without_closing_says_so(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manageSelection', [(string) $incidencia->id])
+            ->call('saveSelection')
+            ->assertHasErrors('handled')
+            ->assertSet('bulk', true);
+    }
+
+    public function test_the_comment_has_a_length_and_its_message_names_the_field(): void
+    {
+        // «El campo note» no lo entiende nadie: el mensaje se lee en pantalla.
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->set('note', str_repeat('a', 2001))
+            ->set('handled', true)
+            ->call('saveHandling')
+            ->assertHasErrors(['note' => 'max'])
+            ->assertSee('comentario')
+            ->assertDontSee('El campo note');
+
+        $this->assertNull($incidencia->refresh()->handling_note);
+    }
+
+    public function test_the_dialog_says_that_the_two_go_together(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->assertSee('Guardar el comentario')
+            ->assertSee('se borrará también el comentario');
+    }
+
     public function test_the_listing_says_whether_an_incident_was_handled(): void
     {
         $corrida = $this->storedRun();
@@ -506,10 +633,16 @@ class IncidentRunScreenTest extends TestCase
 
     // --- El resalte por UT, desde el calendario de capacidades (18/08/2026) ---
 
-    /** @return array<string, mixed>|null La sección de esa ruta, como la ve la vista. */
+    /**
+     * La sección de esa ruta, como la ve la vista.
+     *
+     * Sale de la propiedad calculada y no de `viewData`: desde el 18/08/2026 el
+     * listado es una isla y sus datos ya no viajan en `with()`, justo para no
+     * cargarlos cuando sólo se abre un diálogo.
+     */
     private function seccion($componente, string $ruta): ?array
     {
-        return collect($componente->viewData('rutas'))->firstWhere('nombre', $ruta);
+        return collect($componente->instance()->rutas)->firstWhere('nombre', $ruta);
     }
 
     public function test_it_highlights_the_routes_of_the_courier_it_was_opened_with(): void
@@ -620,5 +753,358 @@ class IncidentRunScreenTest extends TestCase
             ->assertHasNoErrors();
 
         $this->assertNotNull($incidencia->refresh()->handled_at);
+    }
+
+    // --- Gestión en lote (18/08/2026) ----------------------------------------
+
+    public function test_it_closes_several_incidents_with_one_comment(): void
+    {
+        // El caso real: un lote del mismo comercio pasa por la cinta en
+        // segundos y arrastra exactamente la misma incidencia.
+        $corrida = $this->storedRun();
+        $lote = collect(['1', '2', '3'])->map(fn ($id) => $this->incident($corrida, $id));
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->set('selection', $lote->pluck('id')->all())
+            ->call('manageSelection')
+            ->assertSet('bulk', true)
+            ->set('note', 'Mismo lote: pasaron seguidos por la cinta.')
+            ->set('handled', true)
+            ->call('saveSelection')
+            ->assertHasNoErrors()
+            ->assertSet('selection', [])
+            ->assertSet('bulk', false);
+
+        foreach ($lote as $incidencia) {
+            $incidencia->refresh();
+
+            $this->assertSame('Mismo lote: pasaron seguidos por la cinta.', $incidencia->handling_note);
+            $this->assertNotNull($incidencia->handled_at);
+            $this->assertSame($this->user->fullName(), $incidencia->handled_by_name);
+        }
+    }
+
+    public function test_an_empty_comment_in_bulk_does_not_wipe_the_ones_already_written(): void
+    {
+        // En el diálogo de una sola, vaciar el campo es querer quitar el
+        // comentario. Aquí sería un accidente: se marcan quince y se cierran.
+        $corrida = $this->storedRun();
+        $conComentario = $this->incident($corrida, '1');
+        $conComentario->handling_note = 'Hablado con la UT';
+        $conComentario->save();
+        $sinComentario = $this->incident($corrida, '2');
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->set('selection', [$conComentario->id, $sinComentario->id])
+            ->call('manageSelection')
+            ->set('handled', true)
+            ->call('saveSelection')
+            ->assertHasNoErrors();
+
+        $this->assertSame('Hablado con la UT', $conComentario->refresh()->handling_note);
+        $this->assertNull($sinComentario->refresh()->handling_note);
+        $this->assertNotNull($sinComentario->handled_at);
+    }
+
+    public function test_bulk_closes_but_never_reopens(): void
+    {
+        // Reabrir en lote borraría fecha, autor y nombre de incidencias
+        // atendidas hace semanas: eso se pide de una en una, mirándolas.
+        $corrida = $this->storedRun();
+        $atendida = $this->incident($corrida, '1');
+        $atendida->handled_at = now()->subWeek();
+        $atendida->handled_by_name = 'Quien la atendió';
+        $atendida->save();
+
+        // Releída de la base: comparar contra la Carbon en memoria tropieza con
+        // los microsegundos que Postgres redondea al guardar.
+        $cuando = $atendida->refresh()->handled_at;
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->set('selection', [$atendida->id])
+            ->call('manageSelection')
+            ->set('note', 'Repaso del lote')
+            ->call('saveSelection')
+            ->assertHasNoErrors();
+
+        $atendida->refresh();
+
+        $this->assertTrue($atendida->handled_at->equalTo($cuando));
+        $this->assertSame('Quien la atendió', $atendida->handled_by_name);
+        $this->assertSame('Repaso del lote', $atendida->handling_note);
+    }
+
+    public function test_a_batch_comment_does_not_leave_open_incidents_commented(): void
+    {
+        // La misma regla que en el diálogo de una sola. Aquí sólo estorba si
+        // alguna de las marcadas se quedaría abierta.
+        $corrida = $this->storedRun();
+        $abierta = $this->incident($corrida, '1');
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manageSelection', [(string) $abierta->id])
+            ->set('note', 'Mismo lote.')
+            ->call('saveSelection')
+            ->assertHasErrors('handled');
+
+        $this->assertNull($abierta->refresh()->handling_note);
+    }
+
+    public function test_a_batch_comment_on_incidents_already_handled_is_fine(): void
+    {
+        // Un repaso sobre lo ya cerrado: no deja ninguna abierta y comentada.
+        $corrida = $this->storedRun();
+        $atendida = $this->incident($corrida, '1');
+        $atendida->forceFill([
+            'handled_at' => now()->subWeek(),
+            'handled_by_name' => 'Quien la atendió',
+        ])->save();
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manageSelection', [(string) $atendida->id])
+            ->set('note', 'Repaso del lote')
+            ->call('saveSelection')
+            ->assertHasNoErrors();
+
+        $this->assertSame('Repaso del lote', $atendida->refresh()->handling_note);
+    }
+
+    public function test_the_selection_is_looked_up_and_not_believed(): void
+    {
+        // Los ids llegan del navegador: ni un paquete correcto se «atiende», ni
+        // se toca el de otra jornada por pasar su número.
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+        $correcto = $this->package($corrida, '2');
+        $otraJornada = $this->incident($this->storedRun('2026-08-04'), '3');
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->set('selection', [$incidencia->id, $correcto->id, $otraJornada->id])
+            ->call('manageSelection')
+            ->set('handled', true)
+            ->call('saveSelection')
+            ->assertHasNoErrors();
+
+        $this->assertNotNull($incidencia->refresh()->handled_at);
+        $this->assertNull($correcto->refresh()->handled_at);
+        $this->assertNull($otraJornada->refresh()->handled_at);
+    }
+
+    public function test_the_section_checkbox_carries_the_ids_of_its_rows(): void
+    {
+        // Marcar y desmarcar es cosa del navegador desde el 18/08/2026: con una
+        // ida al servidor por casilla, cada clic repintaba la jornada entera.
+        // Lo que se puede fijar desde aquí es que la casilla sale cableada.
+        $corrida = $this->storedRun();
+        $unas = collect(['1', '2'])->map(fn ($id) => $this->incident($corrida, $id))->pluck('id')->all();
+
+        $html = Livewire::test('incident-run', ['date' => '2026-08-03'])->html();
+
+        $this->assertStringContainsString('x-model="marcadas"', $html);
+
+        foreach ($unas as $id) {
+            $this->assertStringContainsString('value="'.$id.'"', $html);
+        }
+
+        // Y la de la cabecera lleva los ids de su lista para marcarlas de una vez.
+        $this->assertStringContainsString('.every(id => marcadas.includes(id))', $html);
+    }
+
+    public function test_an_incident_already_handled_has_no_checkbox(): void
+    {
+        // Gestionar en lote es cerrar: una ya cerrada no tiene nada que hacer
+        // ahí, y ofrecer su casilla invita a marcarla para nada.
+        $corrida = $this->storedRun();
+        $pendiente = $this->incident($corrida, '1');
+        $atendida = $this->incident($corrida, '2');
+        $atendida->forceFill([
+            'handled_at' => now(),
+            'handled_by' => auth()->id(),
+            'handled_by_name' => 'Quien mira',
+        ])->save();
+
+        $html = Livewire::test('incident-run', ['date' => '2026-08-03'])->html();
+
+        $this->assertStringContainsString('value="'.$pendiente->id.'"', $html);
+        $this->assertStringNotContainsString('value="'.$atendida->id.'"', $html);
+
+        // Y la de la cabecera tampoco la ofrece: marca las de su lista, y ésa
+        // ya no está en ella.
+        $this->assertStringNotContainsString('"'.$atendida->id.'"]', $html);
+    }
+
+    public function test_with_every_incident_handled_the_section_checkbox_is_gone(): void
+    {
+        $corrida = $this->storedRun();
+        $this->incident($corrida, '1')->forceFill([
+            'handled_at' => now(),
+            'handled_by' => auth()->id(),
+            'handled_by_name' => 'Quien mira',
+        ])->save();
+
+        $html = Livewire::test('incident-run', ['date' => '2026-08-03'])->html();
+
+        $this->assertStringNotContainsString('Marcar todas las de esta lista', $html);
+    }
+
+    public function test_the_selection_travels_only_when_the_bulk_dialog_opens(): void
+    {
+        $corrida = $this->storedRun();
+        $lote = collect(['1', '2'])->map(fn ($id) => $this->incident($corrida, $id))->pluck('id')->all();
+
+        // Los ids llegan del navegador en la propia llamada, no de un
+        // `wire:model` que va y viene con cada casilla.
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manageSelection', array_map('strval', $lote))
+            ->assertSet('bulk', true)
+            ->assertSet('selection', $lote);
+    }
+
+    public function test_pressing_manage_without_anything_marked_says_so(): void
+    {
+        $this->storedRun();
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manageSelection')
+            ->assertSet('bulk', false)
+            ->assertDispatched('toast', type: 'warning');
+    }
+
+    public function test_reading_a_day_does_not_let_you_manage_in_bulk_either(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        $mirona = User::factory()->withoutRole()->create();
+        $mirona->givePermissionTo('incidents.view');
+        $this->actingAs($mirona);
+
+        // Ni las casillas se pintan, ni sirve llamar a los métodos a mano.
+        $this->get($this->url())->assertOk()->assertDontSee('Marcar todas las de esta lista');
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->set('selection', [$incidencia->id])
+            ->call('manageSelection')
+            ->assertForbidden();
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->set('selection', [$incidencia->id])
+            ->set('handled', true)
+            ->call('saveSelection')
+            ->assertForbidden();
+
+        $this->assertNull($incidencia->refresh()->handled_at);
+    }
+
+    public function test_the_bar_and_the_checkboxes_are_there_for_who_can_manage(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        $this->get($this->url())->assertOk()->assertSee('Marcar todas las de esta lista');
+
+        // La barra sale sin recuento: lo dice el diálogo, justo antes de
+        // escribir en todas.
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->set('selection', [$incidencia->id])
+            ->assertSee('Gestionar juntas')
+            ->assertDontSee('1 incidencia marcada');
+    }
+
+    // --- Lo que cuesta abrir un diálogo (18/08/2026) -------------------------
+
+    /** Los trozos de isla que la respuesta manda al navegador. */
+    private function islas($componente): string
+    {
+        return implode('', $componente->effects['islandFragments'] ?? []);
+    }
+
+    public function test_opening_a_dialog_does_not_repaint_the_listing(): void
+    {
+        // El listado es una isla justo por esto: con ~650 paquetes, abrir un
+        // diálogo volvía a pintar la jornada entera —640 ms y 2 MB de HTML— para
+        // cambiar un modal.
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        $componente = Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id);
+
+        $this->assertSame('', $this->islas($componente));
+        $this->assertStringNotContainsString('Se fueron con otra ruta', $componente->html());
+
+        // Y el diálogo sí está: lo que no se repinta es lo de debajo.
+        $componente->assertSee('Gestión de la incidencia');
+    }
+
+    public function test_the_listing_is_not_even_queried_to_open_a_dialog(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        $componente = Livewire::test('incident-run', ['date' => '2026-08-03']);
+
+        $consultas = [];
+        \DB::listen(function ($query) use (&$consultas) {
+            $consultas[] = $query->sql;
+        });
+
+        $componente->call('manage', $incidencia->id);
+
+        // Ninguna consulta trae la lista de paquetes: las que quedan son los
+        // agregados del balance y el paquete del propio diálogo.
+        foreach ($consultas as $sql) {
+            $this->assertStringNotContainsString('order by "belt_time"', $sql);
+        }
+
+        $this->assertLessThan(6, count($consultas), 'Abrir el diálogo disparó '.count($consultas).' consultas.');
+    }
+
+    public function test_the_row_buttons_call_through_wire_and_not_with_wire_click(): void
+    {
+        // La trampa de las islas: un `wire:click` **dentro** de una isla le dice
+        // a Livewire que repinte sólo esa isla, y estos dos diálogos viven
+        // fuera. Con `wire:click` el icono no abría nada; por `$wire` la
+        // petición no lleva isla y se repinta todo menos ellas.
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        $html = Livewire::test('incident-run', ['date' => '2026-08-03'])->html();
+
+        $this->assertStringContainsString('x-on:click="$wire.manage('.$incidencia->id.')"', $html);
+        $this->assertStringContainsString('x-on:click="$wire.show('.$incidencia->id.')"', $html);
+        $this->assertStringNotContainsString('wire:click="manage(', $html);
+        $this->assertStringNotContainsString('wire:click="show(', $html);
+    }
+
+    public function test_saving_repaints_the_listing(): void
+    {
+        // Una isla no se repinta sola: si alguien quita el `refreshListing()`,
+        // la fila se quedaría diciendo «Pendiente» con la incidencia atendida.
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1');
+
+        $componente = Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manage', $incidencia->id)
+            ->set('handled', true)
+            ->call('saveHandling');
+
+        $this->assertStringContainsString('Atendida', $this->islas($componente));
+    }
+
+    public function test_saving_a_batch_repaints_the_listing_and_clears_the_selection(): void
+    {
+        $corrida = $this->storedRun();
+        $lote = collect(['1', '2'])->map(fn ($id) => $this->incident($corrida, $id))->pluck('id')->all();
+
+        $componente = Livewire::test('incident-run', ['date' => '2026-08-03'])
+            ->call('manageSelection', array_map('strval', $lote))
+            ->set('handled', true)
+            ->call('saveSelection');
+
+        $this->assertStringContainsString('Atendida', $this->islas($componente));
+
+        // Y el navegador vacía su selección al recibir esto.
+        $componente->assertDispatched('seleccion-limpia');
     }
 }

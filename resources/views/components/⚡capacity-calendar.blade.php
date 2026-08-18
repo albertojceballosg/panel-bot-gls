@@ -145,10 +145,30 @@ new #[Layout('components.layouts.app')] class extends Component
                     ? null
                     : $volumen / $capacity;
 
+                // Qué parte de ese volumen es de paquetes que pasaron con su
+                // propia ruta y qué parte acabó fuera de ella. Van en tanto por
+                // uno del día —suman 1— porque es lo que se lee al lado del
+                // porcentaje: «de este 11 %, cuánto es suyo».
+                // Un lado sin volumen medido cuenta como cero y no como «no lo
+                // sé»: aquí se reparte lo que *sí* se sabe, y el hueco de los
+                // envíos sin volumen lo cuenta el diálogo. Sin total no hay
+                // reparto posible y los dos quedan a null.
+                $parte = fn (?float $v) => $volumen === null || $volumen <= 0
+                    ? null
+                    : ($v ?? 0) / $volumen;
+
                 return [$clave => [
                     'volume' => $volumen,
                     'usage' => $ocupacion,
                     'band' => $this->band($ocupacion, $umbrales),
+                    'own' => $parte($celda->propio === null ? null : (float) $celda->propio),
+                    'foreign' => $parte($celda->ajeno === null ? null : (float) $celda->ajeno),
+
+                    // Cuántos paquetes acabaron fuera de su ruta: es lo que
+                    // decide si la celda enseña el enlace a las incidencias
+                    // como un aviso o como un atajo más.
+                    'incidents' => (int) $celda->incidencias,
+
                     'shipments' => (int) $celda->envios,
                     'measured' => (int) $celda->con_volumen,
                 ]];
@@ -327,17 +347,47 @@ new #[Layout('components.layouts.app')] class extends Component
         //
         // `count(volume_m3)` no cuenta los nulos, que es exactamente la
         // cobertura que hay que enseñar junto a la suma.
+        //
+        // Se agrupa además por el reparto —lo que pasó con su ruta y lo que
+        // acabó fuera de ella— porque desde el 18/08/2026 eso va en la celda y
+        // no sólo en el diálogo. Son dos filas por UT y día en vez de una, y la
+        // tabla se sigue armando con la misma consulta.
+        $reparto = "case when run_packages.type is null then 'own' else 'foreign' end";
+
         $celdas = RunPackage::query()
             ->join('incident_runs', 'incident_runs.id', '=', 'run_packages.incident_run_id')
             ->whereNull('run_packages.withdrawn_at')
             ->whereBetween('incident_runs.run_date', [$lunes->toDateString(), $domingo->toDateString()])
             ->groupBy('incident_runs.run_date', 'run_packages.assigned_courier_name')
+            ->groupByRaw($reparto)
             ->selectRaw('incident_runs.run_date::text as dia')
             ->selectRaw('run_packages.assigned_courier_name as ut')
+            ->selectRaw($reparto.' as parte')
             ->selectRaw('sum(run_packages.volume_m3) as volumen')
             ->selectRaw('count(*) as envios')
             ->selectRaw('count(run_packages.volume_m3) as con_volumen')
             ->get()
+            // Las dos mitades de una celda se pliegan aquí en una sola fila: el
+            // SQL las trae separadas para poder repartir, pero la tabla enseña
+            // un día por columna.
+            ->groupBy(fn ($fila) => ($fila->ut ?? '').'|'.$fila->dia)
+            ->map(function (Collection $mitades) {
+                $suma = fn (Collection $filas) => $filas->whereNotNull('volumen')->isEmpty()
+                    ? null
+                    : (float) $filas->sum(fn ($fila) => (float) $fila->volumen);
+
+                return (object) [
+                    'dia' => $mitades->first()->dia,
+                    'ut' => $mitades->first()->ut,
+                    'volumen' => $suma($mitades),
+                    'propio' => $suma($mitades->where('parte', 'own')),
+                    'ajeno' => $suma($mitades->where('parte', 'foreign')),
+                    'envios' => $mitades->sum(fn ($fila) => (int) $fila->envios),
+                    'con_volumen' => $mitades->sum(fn ($fila) => (int) $fila->con_volumen),
+                    'incidencias' => $mitades->where('parte', 'foreign')->sum(fn ($fila) => (int) $fila->envios),
+                ];
+            })
+            ->values()
             ->groupBy(fn ($celda) => $celda->ut ?? '');
 
         $maestro = Courier::orderBy('name')->get();
@@ -489,7 +539,7 @@ new #[Layout('components.layouts.app')] class extends Component
                               description="Da de alta la primera en el maestro y aquí saldrá su semana." />
         @else
             <div class="overflow-x-auto">
-                <table class="w-full min-w-4xl text-sm">
+                <table class="w-full min-w-6xl text-sm">
                     <thead>
                         <tr class="border-b border-slate-200 text-left text-xs tracking-wider text-slate-500 uppercase">
                             <th class="px-6 py-3 font-semibold">UT</th>
@@ -544,55 +594,96 @@ new #[Layout('components.layouts.app')] class extends Component
                                             <span class="text-slate-300">—</span>
                                         @else
                                             {{-- Manda lo que ocupó de la furgoneta, que es la
-                                                 lectura útil: 4 m³ es mucho o poco según quién
-                                                 los lleve, y el neto va debajo. El color sale del
-                                                 tramo en que cae, de Configuraciones. Sin
-                                                 capacidad declarada no hay entre qué dividir. --}}
+                                                 lectura útil: 4 m³ es mucho o poco según quién los
+                                                 lleve. Al lado, entre paréntesis, de dónde sale ese
+                                                 porcentaje: cuánto pasó con su propia ruta y cuánto
+                                                 acabó fuera. El color del principal es el de su
+                                                 tramo, de Configuraciones. --}}
                                             @php
                                                 $pasada = $celda['usage'] !== null && $celda['usage'] > 1;
 
                                                 // Null mientras la pantalla esté sin configurar, y
                                                 // entonces la cifra sale en el color de siempre.
                                                 $color = $colores[$celda['band']] ?? null;
+
+                                                // El neto en m³ dejó de pintarse el 18/08/2026 a
+                                                // petición; sigue en el diálogo, que es donde se
+                                                // va a cuadrar con incidencias.
+                                                $enlace = route('incident-run', [
+                                                    'date' => $dia->toDateString(),
+                                                    'ut' => $row['key'] === '' ? 'sin-ut' : $row['key'],
+                                                ]);
                                             @endphp
 
-                                            {{-- El porcentaje arriba y el neto debajo, siempre en
-                                                 ese orden: lo que se busca de un vistazo es la
-                                                 ocupación, y en línea con el volumen al lado las
-                                                 dos cifras competían. --}}
-                                            @if ($celda['usage'] === null)
-                                                <span class="block font-semibold text-slate-300"
-                                                      title="Esta UT no tiene capacidad declarada">—</span>
-                                            @else
-                                                {{-- La cifra es un botón: al pulsarla se abre de
-                                                     qué paquetes sale ese porcentaje. Sustituye al
-                                                     icono de carga baja, que hasta el 18/08/2026
-                                                     iba delante del número; el tramo lo sigue
-                                                     diciendo el color. --}}
-                                                <button type="button"
-                                                        wire:click="openDetail(@js($row['key']), '{{ $dia->toDateString() }}')"
-                                                        title="Ver de qué paquetes sale este {{ $ocupacion($celda['usage']) }}"
-                                                        @class([
-                                                            'block w-full cursor-pointer text-right font-semibold underline-offset-4 hover:underline',
-                                                            'text-shell-900' => $color === null,
-                                                        ])
-                                                        @style(['color: '.$color => $color !== null])>
-                                                    {{ $ocupacion($celda['usage']) }}
+                                            {{-- Dos líneas y no una: el reparto entre paréntesis
+                                                 es casi tan ancho como la cifra, y en fila con ella
+                                                 obligaba a la columna a partirlo por donde cayera.
+                                                 Debajo, cada cosa se lee entera. --}}
+                                            <div class="flex flex-col items-end gap-0.5">
+                                                <div class="flex items-baseline justify-end gap-1">
+                                                    {{-- La cifra es un botón: al pulsarla se abre de
+                                                         qué paquetes sale, con los volúmenes y la
+                                                         cobertura del día. El guion también, porque sin
+                                                         capacidad declarada esa celda no tiene otra
+                                                         forma de contar lo que movió. --}}
+                                                    <button type="button"
+                                                            wire:click="openDetail(@js($row['key']), '{{ $dia->toDateString() }}')"
+                                                            title="{{ $celda['usage'] === null
+                                                                ? 'Esta UT no tiene capacidad declarada: ver de qué paquetes sale el día'
+                                                                : 'Ver de qué paquetes sale este '.$ocupacion($celda['usage']) }}"
+                                                            @class([
+                                                                'cursor-pointer font-semibold whitespace-nowrap underline-offset-4 hover:underline',
+                                                                'text-slate-300' => $celda['usage'] === null,
+                                                                'text-shell-900' => $celda['usage'] !== null && $color === null,
+                                                            ])
+                                                            @style(['color: '.$color => $celda['usage'] !== null && $color !== null])>
+                                                        {{ $celda['usage'] === null ? '—' : $ocupacion($celda['usage']) }}
 
-                                                    {{-- Que no cupiera en la furgoneta ya no puede
-                                                         decirlo el color —lo elige el cliente, y un
-                                                         125 % cae en el tramo bueno—, así que lo
-                                                         dice esta marca. --}}
-                                                    @if ($pasada)
-                                                        <span class="align-middle text-amber-500"
-                                                              title="Se pasa de la capacidad declarada">▲</span>
-                                                    @endif
-                                                </button>
-                                            @endif
+                                                        {{-- Que no cupiera en la furgoneta ya no puede
+                                                             decirlo el color —lo elige el cliente, y un
+                                                             125 % cae en el tramo bueno—, así que lo
+                                                             dice esta marca. --}}
+                                                        @if ($pasada)
+                                                            <span class="align-middle text-amber-500"
+                                                                  title="Se pasa de la capacidad declarada">▲</span>
+                                                        @endif
+                                                    </button>
 
-                                            {{-- El volumen del que sale, en pequeño: el dato bruto
-                                                 sigue haciendo falta para cuadrar con incidencias. --}}
-                                            <span class="block text-xs text-slate-400">{{ $vol($celda['volume']) }}</span>
+                                                    {{-- A las incidencias de esa ruta ese día, con sus
+                                                         rutas abiertas y resaltadas. En ámbar cuando
+                                                         hubo paquetes fuera de su ruta y en gris cuando
+                                                         no: el icono está siempre, pero sólo llama la
+                                                         atención si hay algo que mirar. --}}
+                                                    <a href="{{ $enlace }}" wire:navigate
+                                                       @class([
+                                                           'shrink-0 transition',
+                                                           'text-amber-500 hover:text-amber-600' => $celda['incidents'] > 0,
+                                                           'text-slate-300 hover:text-slate-500' => $celda['incidents'] === 0,
+                                                       ])
+                                                       title="{{ $celda['incidents'] > 0
+                                                           ? $celda['incidents'].' '.($celda['incidents'] === 1 ? 'paquete acabó' : 'paquetes acabaron').' fuera de esta ruta: ver las incidencias del día'
+                                                           : 'Ver las incidencias de esta ruta ese día' }}">
+                                                        <span class="sr-only">Ver las incidencias de esta ruta ese día</span>
+                                                        <svg class="size-3.5" fill="none" viewBox="0 0 24 24"
+                                                             stroke-width="2.2" stroke="currentColor" aria-hidden="true">
+                                                            <path stroke-linecap="round" stroke-linejoin="round"
+                                                                  d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                                                        </svg>
+                                                    </a>
+                                                </div>
+
+                                                {{-- El reparto, en pequeño: lo que pasó con su ruta
+                                                     y lo que acabó fuera. Suman 100 %, así que el
+                                                     segundo es el que se mira; va en ámbar sólo
+                                                     cuando existe, para que un día limpio no lleve
+                                                     un color de aviso. --}}
+                                                @if ($celda['own'] !== null)
+                                                    <span class="text-xs whitespace-nowrap text-slate-400"
+                                                          title="{{ $ocupacion($celda['own']) }} del volumen pasó con su propia ruta y {{ $ocupacion($celda['foreign']) }} acabó fuera de ella">
+                                                        ({{ $ocupacion($celda['own']) }}<span class="text-slate-300"> · </span><span @class(['text-amber-600' => $celda['foreign'] > 0])>{{ $ocupacion($celda['foreign']) }}</span>)
+                                                    </span>
+                                                @endif
+                                            </div>
                                         @endif
                                     </td>
                                 @endforeach
@@ -605,15 +696,16 @@ new #[Layout('components.layouts.app')] class extends Component
             <div class="border-t border-slate-200 px-6 py-3 text-xs text-slate-500">
                 El volumen de un día es el de los paquetes que el maestro asignaba a la ruta de esa UT,
                 estuviera donde estuviera al final el paquete. <strong>El porcentaje es ese volumen entre
-                la capacidad declarada de su furgoneta</strong>, y debajo va el neto en m³, así que sale
-                un guion en las UT que no tienen la capacidad puesta en el maestro.
+                la capacidad declarada de su furgoneta</strong>, así que sale un guion en las UT que no
+                tienen la capacidad puesta en el maestro. Entre paréntesis, de dónde sale: <strong>qué
+                parte de ese volumen pasó con su propia ruta y qué parte acabó fuera de ella</strong>
+                —suman el 100 %—, y el triángulo lleva a las incidencias de esa ruta ese día.
                 El color de cada porcentaje es el del tramo en que cae —malo, justo o bueno—, según los
                 umbrales y los colores de
                 <a href="{{ route('settings', ['module' => 'capacity-calendar']) }}" wire:navigate
                    class="font-medium underline underline-offset-2">Configuraciones · Calendario de capacidades</a>.
-                <strong>Pulsa un porcentaje</strong> para ver de qué paquetes sale —cuánto de ese volumen
-                pasó con su propia ruta y cuánto acabó fuera de ella— y saltar desde ahí a las
-                incidencias de ese día.
+                <strong>Pulsa un porcentaje</strong> para ver el detalle del día: los volúmenes en m³, los
+                envíos y cuántos de ellos traían volumen.
                 El ▲ marca los días que se pasan de la capacidad declarada de la furgoneta.
                 Cuando el portal no da el volumen de todos los envíos ese hueco no se suma como cero
                 —significaría «no lo sé»—, así que la ocupación real puede ser mayor que la que se ve.
