@@ -1003,7 +1003,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                                              ruta más compatible, no un hecho comprobado. --}}
                                                         <th class="pb-2 font-medium">Apunta a</th>
                                                     @endif
-                                                    <th class="pb-2 pr-3 text-right font-medium">Ganancia</th>
+                                                    <th class="pb-2 pr-3 font-medium">Ganancia</th>
                                                     <th class="pb-2 font-medium">Fiabilidad</th>
                                                     <th class="pb-2 font-medium">Gestión</th>
                                                     <th class="pb-2"><span class="sr-only">Acciones</span></th>
@@ -1044,7 +1044,7 @@ new #[Layout('components.layouts.app')] class extends Component
 
                                                         {{-- Lo facturado por **este** envío, sin IVA. Un «—» es que
                                                              no aparece en Envexpress: no se sabe, no es cero. --}}
-                                                        <td class="py-2 pr-3 text-right tabular-nums"
+                                                        <td class="py-2 pr-3 tabular-nums"
                                                             @if ($fila->net_revenue === null) title="Este envío no aparece en Envexpress: no se sabe lo que se facturó por él." @endif>
                                                             {{ $this->euros($fila->net_revenue) }}
                                                         </td>
@@ -1175,7 +1175,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                                     <th class="pb-2 font-medium">Código</th>
                                                     <th class="pb-2 font-medium">Comercio</th>
                                                     <th class="pb-2 font-medium">Hora cinta</th>
-                                                    <th class="pb-2 pr-3 text-right font-medium">Ganancia</th>
+                                                    <th class="pb-2 pr-3 font-medium">Ganancia</th>
                                                     <th class="pb-2"><span class="sr-only">Detalle</span></th>
                                                 </tr>
                                             </thead>
@@ -1198,7 +1198,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                                              envíos que fueron donde debían, o sea la mayoría. Sin
                                                              esta columna el importe del encabezado no se puede
                                                              cuadrar mirando la pantalla. --}}
-                                                        <td class="py-2 pr-3 text-right tabular-nums"
+                                                        <td class="py-2 pr-3 tabular-nums"
                                                             @if ($fila->net_revenue === null) title="Este envío no aparece en Envexpress: no se sabe lo que se facturó por él." @endif>
                                                             {{ $this->euros($fila->net_revenue) }}
                                                         </td>
