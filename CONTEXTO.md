@@ -172,8 +172,28 @@ un id reutilizado por un tercero.
 { "generado": "…", "parametros": { "semiancho_min": 14 }, "comercios": [ … ] }
 ```
 
-Por ahora sólo hay uno: **`semiancho_min`**, la ventana de atribución del bot en minutos a
-cada lado del pico de descarga de una ruta. Por defecto el bot usa ±10.
+Hay dos:
+
+| Clave | Qué es | Defecto del bot | Rango |
+|---|---|---|---|
+| `semiancho_min` | La ventana de atribución, en minutos a cada lado del pico de descarga de una ruta. | ±10 | entero **> 0**, sin tope |
+| `dias_atras_ganancia` | Cuántos días **hacia atrás** pide el bot en Envexpress, además del día que analiza, para encontrar la ganancia de cada envío. | 3 | entero **de 0 a 30** |
+
+`dias_atras_ganancia` es de la fase 14 y **este panel ya lo sirve desde el 19/08/2026**
+—módulo «Rentabilidad» en Configuraciones—, aunque **el bot todavía no lo lee**: hasta que lo
+haga, corre con su 3. No comparte todas las reglas del primero, aunque viaje por el mismo
+sitio:
+
+- **El cero es válido** y significa «sólo el día que se analiza». En `semiancho_min` un cero
+  sería una ventana que no contiene nada; aquí es una opción legítima.
+- **Sí lleva tope, al contrario que el otro.** Cada día de ventana es otro día de listado que
+  Envexpress tiene que devolver —uno solo ronda los 4 MB—, así que un número disparatado no es
+  un ajuste agresivo: es una petición que muere en el timeout y una jornada sin ganancia. El
+  máximo de 30 cubre cualquier puente.
+- **Por qué existe:** en Envexpress el envío lleva la fecha de su **creación** y en GLS la de la
+  **recogida**. El lunes 10/08/2026, 103 de los 997 paquetes del día se habían creado el
+  domingo; sin mirar hacia atrás se quedan sin ganancia. Mirar hacia adelante no sirve de nada:
+  no se recoge un envío antes de crearlo.
 
 **Va aquí y no en un endpoint propio** porque el bot guarda esta respuesta en disco y la
 reutiliza cuando el panel no contesta: el parámetro hereda esa tolerancia a caídas sin
@@ -181,8 +201,14 @@ necesitar su propia caché.
 
 **La clave se omite si nadie la ha configurado.** Es la regla de `settings` llevada al
 contrato: el panel no inventa defectos, y mandar `""` o `0` le daría al bot un valor que
-nadie eligió — con `0` correría con una ventana que no contiene nada. `ApiContractTest` lo
-fija en los dos sentidos: ausente cuando no hay valor, y entero (no cadena) cuando lo hay.
+nadie eligió — con `0`, `semiancho_min` correría con una ventana que no contiene nada.
+`ApiContractTest` lo fija en los dos sentidos: ausente cuando no hay valor, y entero (no
+cadena) cuando lo hay.
+
+⚠️ **Ojo al omitir: `dias_atras_ganancia` sí puede valer `0`, y ese cero tiene que viajar.**
+Las dos cosas conviven en el mismo `array_filter` del controlador, que descarta **nulos** y no
+falsy — `array_filter($x)` a secas se llevaría el cero por delante y el ajuste «sólo el día»
+no llegaría nunca. Hay un test dedicado, porque ese callback parece eliminable y no lo es.
 
 **Sin tope por arriba** (acordado el 17/08/2026): sólo entero positivo. Quien lo configura
 conoce su operación mejor que nosotros. Lo que sí hay es rastro — el cambio queda en
@@ -660,6 +686,7 @@ docker compose logs -f vite
 | 11 | Configuraciones por módulo, y el calendario leyéndolas | **Hecha** (14/08/2026; el calendario, el 17/08/2026) |
 | 12 | Roles y permisos, con su maestro | **Hecha** (18/08/2026) |
 | 13 | La ganancia por ruta: guardarla y enseñarla | **Hecha** (19/08/2026) salvo la decisión de si merece pantalla propia |
+| 14 | Configuraciones → Rentabilidad: los días hacia atrás de la ganancia | **Hecha** (19/08/2026) en este repo; el bot todavía no lee la clave |
 
 > La tabla se quedó en la fase 5 hasta el **17/08/2026**, con seis fases descritas más abajo y
 > ninguna listada aquí: quien abría el documento por §7 leía que el proyecto iba por la mitad.
@@ -669,7 +696,7 @@ docker compose logs -f vite
 > Lo único que queda abierto de la 6 a la 11 es **6.D**, el backfill del `codigo`, que es mejora
 > y no requisito (§8).
 
-**La suite son 447 tests** (1.318 aserciones) el 19/08/2026, sobre Postgres. Es la cifra
+**La suite son 455 tests** (1.343 aserciones) el 19/08/2026, sobre Postgres. Es la cifra
 que hay que ver pasar antes de dar cualquier cosa por terminada, no la inspección del código.
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -2234,6 +2261,66 @@ enseñado. La ganancia va junto al recuento de paquetes, y sola.
 rango de fechas— o se queda como una columna más de la jornada. Se empieza por lo segundo, que
 es lo que se pidió, y se decide con el cliente cuando lo vea funcionando.
 
+### Fase 14 — Configuraciones → Rentabilidad. Hecha el 19/08/2026
+
+**Qué pide el cliente:** decidir él **cuántos días hacia atrás** pide el bot en Envexpress al
+buscar la ganancia. Hoy son 3, fijos en el código del bot. Pasa a ser el segundo parámetro
+configurable, en un módulo propio llamado **Rentabilidad** (§3.2).
+
+**Lo que NO es esta fase:** una pantalla nueva. La fase 11 dejó **una sola pantalla que sirve a
+todos los módulos**, así que esto no lleva ruta, ni componente, ni migración: es una entrada en
+`SettingsCatalog::modules()`, un tipo nuevo y una línea en el controlador del maestro.
+
+**14.A — El catálogo. Hecho.** `profitability` en `SettingsCatalog::modules()`, junto a `bot` y
+`capacity-calendar`, con un solo campo `lookback_days`. Apunta a la pantalla de incidencias
+(`'route' => 'incidents'`), que es donde se ven los importes que este ajuste hace aparecer o
+faltar. **Ni ruta, ni componente, ni migración**: el módulo salió en la barra lateral solo,
+porque el menú se arma recorriendo el catálogo, y hereda el permiso `settings.view` de la fase
+12 sin declarar nada.
+
+**14.B — `TYPE_DAYS`. Hecho**, y es un tipo aparte y no `TYPE_MINUTES` con otra etiqueta,
+porque las dos reglas cambian: `['required', 'integer', 'min:0', 'max:30']` contra el
+`min:1` sin tope del otro. Declarado en el catálogo y en el Blade, que son los dos únicos
+sitios que el propio catálogo avisa; el `<input>` sale con `min="0" max="30"` para que el
+navegador acompañe a la validación en vez de contradecirla.
+
+**14.C — Servirlo. Hecho**, con la línea prevista en `RouteMasterController`. **Dos avisos
+sobre lo que decía esta fase antes de hacerse:**
+
+1. **El `array_filter` ya tenía callback.** La fase avisaba de «la trampa del `array_filter`
+   sin callback», pero desde la fase 11 la llamada era `array_filter([...], fn ($v) => $v !== null)`,
+   que descarta nulos y **no** ceros. O sea que el cero llegaba bien sin tocar nada. Lo que sí
+   hacía falta era **impedir que alguien lo quite**: ese callback parece ruido eliminable
+   —`array_filter` a secas hace «lo mismo» con el otro parámetro—, y quitarlo rompería este
+   ajuste en silencio. Ahora lo dicen un comentario y, sobre todo, un test.
+2. **Hubo que tocar una cosa más que la línea.** Con `Setting::for()` una vez por módulo, el
+   endpoint pasaba a hacer una consulta más, y su test de consultas —está ahí porque el bot lo
+   llama por red y el maestro crece— dejaba de pasar. Se añadió `Setting::forModules()`, que
+   lee varios módulos de una vez, así que el coste ya no crece con el catálogo. Si mañana entra
+   un tercer parámetro de otro módulo, no hay que volver a pensarlo.
+
+**14.D — El test. Hecho.** En `ApiContractTest`, las tres direcciones: entero cuando hay valor,
+**presente y a `0` cuando el valor es cero** —el caso que se rompe solo— y ausente cuando nadie
+lo ha configurado, sin que un módulo sin configurar arrastre al que sí lo está. En
+`SettingsTest`, otros cinco: que el módulo se pinta sin ruta propia, que el 0 se guarda, que el
+31 se rechaza y el 30 no, que un negativo se rechaza y que el campo del navegador ofrece el
+mismo rango que las reglas.
+
+**Comprobado con peticiones de verdad**, no leyendo el código — `GET /api/rutas` con el token
+real, en los tres estados:
+
+| Estado del ajuste | Qué llega en `parametros` |
+|---|---|
+| sin configurar | `{"semiancho_min": 10}` — la clave **no aparece** |
+| `0` | `{"semiancho_min": 10, "dias_atras_ganancia": 0}`, entero |
+| `3` | `{"semiancho_min": 10, "dias_atras_ganancia": 3}`, entero |
+
+**Lo que falta, y está en el otro repo.** El bot todavía **no lee** esta clave: su `CONTEXT.md`
+§13.11 lista los cuatro cambios que le tocan. Los dos repos pueden ir por separado — una clave
+que el bot ignora no rompe nada, y un bot que la busque y no la encuentre corre con su 3—, pero
+**hasta que se haga allí, mover este ajuste no cambia nada**. Conviene decírselo al cliente si
+lo toca antes de tiempo.
+
 ## 8. Pendientes y decisiones abiertas
 
 - [x] **Cerrar con el repo del bot el cambio de `ruta` a texto** (§3). Acordado el 13/08/2026,
@@ -2270,6 +2357,15 @@ es lo que se pidió, y se decide con el cliente cuando lo vea funcionando.
       «Ganancia de las rutas» y avisa de que deja fuera los envíos sin ruta—, y hay un test que
       lo fija, así que esto es un pendiente del contrato y no de la interfaz. El bot sí lo tiene resuelto en su listado en
       texto, con una fila `(sin ruta)` aparte.
+- [ ] **La ventana de días de la ganancia (fase 14).** **Hecha en este repo** el 19/08/2026:
+      módulo «Rentabilidad» en Configuraciones y `dias_atras_ganancia` en `GET /api/rutas`,
+      probado con peticiones reales a 0, a 3 y sin configurar. **Queda el bot**, que todavía no
+      lee la clave y corre con su 3 — los cuatro cambios están en su `CONTEXT.md` §13.11.
+      Mientras tanto el ajuste se puede mover y no hace nada, que es lo único que conviene
+      avisarle al cliente. De las dos diferencias con `semiancho_min`, la del tope se resolvió
+      con un tipo propio (`TYPE_DAYS`) y la del cero resultó no ser un problema: el
+      `array_filter` del controlador ya llevaba callback y sólo descartaba nulos. Lo que hay
+      ahora es un test que impide que alguien lo quite.
 - [ ] **El `coste`, y con él el margen.** Fuera de la v4 por decisión del cliente. El bot lo
       recibe de Envexpress en la misma respuesta que la ganancia, así que reincorporarlo es una
       columna aquí y una línea allí, sin peticiones nuevas.

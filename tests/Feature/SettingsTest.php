@@ -226,4 +226,67 @@ class SettingsTest extends TestCase
     {
         $this->get($this->url())->assertOk()->assertSee('type="color"', escape: false);
     }
+
+    // --- Rentabilidad (fase 14, 19/08/2026) ---------------------------------
+
+    private function rentabilidad(string $dias): Testable
+    {
+        return Livewire::test('settings', ['module' => 'profitability'])
+            ->set('values.lookback_days', $dias);
+    }
+
+    public function test_the_profitability_module_has_its_own_screen_without_a_new_route(): void
+    {
+        // La misma pantalla de la fase 11 sirve al módulo nuevo: no hay componente
+        // ni ruta propios, sólo una entrada en el catálogo.
+        $this->get($this->url('profitability'))->assertOk()
+            ->assertSee('Rentabilidad')
+            ->assertSee('Días hacia atrás');
+    }
+
+    /**
+     * **Cero es un valor, no un hueco**: significa «busca sólo el día que se analiza». Es la
+     * primera de las dos diferencias con la ventana de minutos, donde un cero no contendría
+     * nada y por eso se rechaza.
+     */
+    public function test_zero_days_is_a_valid_choice(): void
+    {
+        $this->rentabilidad('0')->call('save')->assertHasNoErrors();
+
+        $this->assertSame('0', Setting::where('module', 'profitability')->value('value'));
+        $this->assertTrue(Setting::configured('profitability'));
+    }
+
+    /**
+     * **Y sí lleva tope**, que es la segunda diferencia. Cada día hacia atrás es otro listado
+     * de ~4 MB que pedirle a Envexpress: un número disparatado no analiza más, agota el
+     * tiempo de la petición y deja la jornada sin ganancia.
+     */
+    public function test_more_than_thirty_days_is_rejected(): void
+    {
+        $this->rentabilidad('31')->call('save')
+            ->assertHasErrors(['values.lookback_days']);
+
+        $this->rentabilidad('30')->call('save')->assertHasNoErrors();
+
+        $this->assertSame('30', Setting::where('module', 'profitability')->value('value'));
+    }
+
+    public function test_a_negative_lookback_is_rejected(): void
+    {
+        $this->rentabilidad('-1')->call('save')
+            ->assertHasErrors(['values.lookback_days']);
+
+        $this->assertSame(0, Setting::where('module', 'profitability')->count());
+    }
+
+    /** El campo del navegador acompaña a la validación: de 0 a 30, sin decimales. */
+    public function test_the_days_field_offers_the_same_range_as_the_rules(): void
+    {
+        $html = Livewire::test('settings', ['module' => 'profitability'])->html();
+
+        $this->assertStringContainsString('min="0"', $html);
+        $this->assertStringContainsString('max="30"', $html);
+        $this->assertStringContainsString('días', $html);
+    }
 }

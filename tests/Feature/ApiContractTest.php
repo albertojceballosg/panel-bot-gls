@@ -77,6 +77,52 @@ class ApiContractTest extends TestCase
         $this->assertSame(14, $respuesta->json('parametros.semiancho_min'));
     }
 
+    // --- La ventana de días de la ganancia (fase 14, 19/08/2026) ------------
+
+    public function test_the_configured_lookback_travels_as_an_integer(): void
+    {
+        $this->merchant('COBO FAMILY, S.L.', '3', 'Freddy GLS');
+        Setting::create(['module' => 'profitability', 'key' => 'lookback_days', 'value' => '5']);
+
+        $respuesta = $this->ask()->assertOk();
+
+        $this->assertSame(5, $respuesta->json('parametros.dias_atras_ganancia'));
+    }
+
+    /**
+     * **El caso que se rompe solo.** Cero significa «busca sólo el día que analizas», que es
+     * una respuesta que el cliente eligió y no un hueco — al contrario que en `semiancho_min`,
+     * donde un cero sería una ventana que no contiene nada.
+     *
+     * Se rompe porque `array_filter` sin callback descarta todo lo falsy, el `0` incluido: el
+     * ajuste desaparecería de la respuesta y el bot correría con su 3 por defecto sin que
+     * nadie pudiera ver por qué. Este test es lo que impide que alguien «simplifique» ese
+     * callback algún día.
+     */
+    public function test_a_lookback_of_zero_is_a_value_and_not_a_hole(): void
+    {
+        $this->merchant('COBO FAMILY, S.L.', '3', 'Freddy GLS');
+        Setting::create(['module' => 'profitability', 'key' => 'lookback_days', 'value' => '0']);
+
+        $respuesta = $this->ask()->assertOk();
+
+        $this->assertArrayHasKey('dias_atras_ganancia', $respuesta->json('parametros'));
+        $this->assertSame(0, $respuesta->json('parametros.dias_atras_ganancia'));
+    }
+
+    /** Y sin configurar sigue sin viajar, como el otro. */
+    public function test_an_unset_lookback_is_absent(): void
+    {
+        $this->merchant('COBO FAMILY, S.L.', '3', 'Freddy GLS');
+        Setting::create(['module' => 'bot', 'key' => 'window_half_minutes', 'value' => '14']);
+
+        $respuesta = $this->ask()->assertOk();
+
+        // El otro parámetro sí está: lo que se comprueba es que un módulo sin configurar no
+        // arrastra al que sí lo está, ni al revés.
+        $this->assertSame(['semiancho_min' => 14], $respuesta->json('parametros'));
+    }
+
     // --- Autenticación ------------------------------------------------------
 
     public function test_without_a_token_it_answers_401(): void

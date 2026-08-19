@@ -34,6 +34,19 @@ class SettingsCatalog
      */
     public const TYPE_MINUTES = 'minutes';
 
+    /**
+     * Días. **No es `TYPE_MINUTES` con otra etiqueta**, y por eso es un tipo aparte:
+     *
+     * - **El cero es válido** y significa «sólo el día que se analiza». En una ventana de
+     *   minutos un cero no contiene nada; aquí es una elección legítima.
+     * - **Lleva tope, 30.** Cada día hacia atrás es otro listado que Envexpress tiene que
+     *   devolver —uno solo ronda los 4 MB—, así que un número disparatado no configura un
+     *   análisis más agresivo: agota el tiempo de la petición y deja la jornada sin ganancia.
+     *   Treinta cubre cualquier puente. Es la diferencia con `TYPE_MINUTES`, donde no poner
+     *   techo era lo correcto porque el coste de un número grande lo paga quien lo elige.
+     */
+    public const TYPE_DAYS = 'days';
+
     /** @return array<string, array<string, mixed>> */
     public static function modules(): array
     {
@@ -103,6 +116,29 @@ class SettingsCatalog
                     'optimal_percent' => ['gt:minimum_percent'],
                 ],
             ],
+
+            // Cuánto hacia atrás mira el bot en Envexpress al buscar la ganancia
+            // (§3.2, fase 14). Se ve el efecto en la pantalla de incidencias, que
+            // es donde se pintan los importes: por eso apunta ahí y no a una suya.
+            'profitability' => [
+                'label' => 'Rentabilidad',
+                'route' => 'incidents',
+                'description' => 'Cuánto hacia atrás busca el bot la ganancia de cada envío.',
+
+                'fields' => [
+                    'lookback_days' => [
+                        'type' => self::TYPE_DAYS,
+                        'label' => 'Días hacia atrás',
+                        'hint' => 'En Envexpress el envío lleva la fecha en que se dio de alta, y GLS lo '
+                            .'recoge ese día o alguno posterior. El bot pide, además del día que analiza, '
+                            .'estos días anteriores, para encontrar los envíos que se crearon antes. Los '
+                            .'lunes es cuando más se nota: el 10/08/2026, 103 de 997 paquetes se habían '
+                            .'creado el domingo. Sin configurar, el bot usa 3. Con 0 busca sólo el día '
+                            .'analizado. Más días encuentran algún envío más, pero cada día extra hace la '
+                            .'consulta más pesada.',
+                    ],
+                ],
+            ],
         ];
     }
 
@@ -153,6 +189,11 @@ class SettingsCatalog
                 // Sin `max`: ver la constante. Entero y positivo es todo lo que
                 // se exige.
                 self::TYPE_MINUTES => ['required', 'integer', 'min:1'],
+
+                // `min:0` y no `min:1`: cero es «sólo el día que se analiza», que es una
+                // respuesta y no un hueco. Y `max:30`, que aquí sí lo hay — ver la
+                // constante. Las dos diferencias con los minutos están en esta línea.
+                self::TYPE_DAYS => ['required', 'integer', 'min:0', 'max:30'],
 
                 // El `<input type="color">` siempre manda `#rrggbb`, pero el
                 // campo de texto de al lado deja escribir cualquier cosa, y esto

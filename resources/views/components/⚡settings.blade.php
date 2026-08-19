@@ -124,6 +124,7 @@ new #[Layout('components.layouts.app')] class extends Component
                 $porcentajes = collect($definicion['fields'])->where('type', \App\Support\SettingsCatalog::TYPE_PERCENT);
                 $colores = collect($definicion['fields'])->where('type', \App\Support\SettingsCatalog::TYPE_COLOR);
                 $minutos = collect($definicion['fields'])->where('type', \App\Support\SettingsCatalog::TYPE_MINUTES);
+                $dias = collect($definicion['fields'])->where('type', \App\Support\SettingsCatalog::TYPE_DAYS);
             @endphp
 
             @if ($minutos->isNotEmpty())
@@ -145,6 +146,38 @@ new #[Layout('components.layouts.app')] class extends Component
                                                 :invalid="$errors->has('values.'.$key)" />
                                     <span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-slate-400">
                                         min
+                                    </span>
+                                </div>
+                            </x-ui.field>
+                        @endforeach
+                    </div>
+                </x-ui.card>
+            @endif
+
+            @if ($dias->isNotEmpty())
+                <x-ui.card>
+                    <h2 class="text-sm font-semibold text-shell-900">Ventana de búsqueda</h2>
+                    <p class="mt-0.5 text-sm text-slate-500">
+                        El bot lo aplica en su siguiente corrida. Las jornadas ya analizadas conservan
+                        la ganancia que se les encontró: cambiar esto no vuelve a buscarla.
+                    </p>
+
+                    <div class="mt-4 grid gap-4 sm:grid-cols-2">
+                        @foreach ($dias as $key => $campo)
+                            <x-ui.field :label="$campo['label']" :for="$key" :hint="$campo['hint'] ?? null"
+                                        :error="$errors->first('values.'.$key)">
+                                {{-- `min="0"` y no `min="1"`: cero es «sólo el día que se
+                                     analiza», que es una elección válida. Y `max="30"`, que
+                                     aquí sí lo hay porque cada día es otro listado de 4 MB
+                                     que pedirle a Envexpress. Las dos cosas están también en
+                                     el catálogo: esto es la comodidad del navegador, no la
+                                     validación — ver TYPE_DAYS. --}}
+                                <div class="relative">
+                                    <x-ui.input wire:model.live.debounce.400ms="values.{{ $key }}" :id="$key"
+                                                type="number" min="0" max="30" step="1" class="pr-14"
+                                                :invalid="$errors->has('values.'.$key)" />
+                                    <span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-slate-400">
+                                        días
                                     </span>
                                 </div>
                             </x-ui.field>

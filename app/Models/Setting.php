@@ -61,6 +61,33 @@ class Setting extends Model
     }
 
     /**
+     * Lo mismo para varios módulos a la vez, en **una** consulta.
+     *
+     * Existe por `GET /api/rutas`: desde la fase 14 sirve parámetros de dos módulos y
+     * llamar a `for()` una vez por módulo le añadía una consulta a cada parámetro nuevo.
+     * Ese endpoint es el producto (regla 3 de `CLAUDE.md`) y tiene un test que le cuenta
+     * las consultas, así que crecer con el catálogo no era aceptable.
+     *
+     * @param  list<string>  $modules
+     * @return array<string, array<string, string>>
+     */
+    public static function forModules(array $modules): array
+    {
+        $guardados = static::whereIn('module', $modules)
+            ->get(['module', 'key', 'value'])
+            ->groupBy('module')
+            ->map(fn ($filas) => $filas->pluck('value', 'key'));
+
+        return collect($modules)
+            ->mapWithKeys(fn (string $module) => [
+                $module => collect(SettingsCatalog::keys($module))
+                    ->mapWithKeys(fn (string $key) => [$key => (string) ($guardados[$module][$key] ?? '')])
+                    ->all(),
+            ])
+            ->all();
+    }
+
+    /**
      * Los parámetros que le faltan a un módulo, por su nombre de cara al
      * usuario. Vacío es «configurado del todo».
      *

@@ -36,6 +36,8 @@ class RouteMasterController
             Log::warning("GET /api/rutas: {$orphans} comercios vivos apuntan a una ruta dada de baja y quedan fuera del maestro.");
         }
 
+        $ajustes = Setting::forModules(['bot', 'profitability']);
+
         return response()->json([
             // Informativo, con zona (§3). APP_TIMEZONE es Europe/Madrid.
             'generado' => now()->toIso8601String(),
@@ -49,8 +51,19 @@ class RouteMasterController
             // `null` cuando nadie lo ha configurado — el panel no inventa
             // defectos (ver la migración de `settings`) — y entonces el bot se
             // queda con el suyo. Un hueco aquí no puede cambiar un informe.
+            //
+            // **El `fn ($v) => $v !== null` no es decorativo y no se puede quitar.**
+            // `array_filter` sin callback descarta todo lo falsy, y eso incluye el `0`
+            // de `dias_atras_ganancia`, donde cero significa «busca sólo el día que
+            // analizas» — una respuesta que el cliente eligió, no un hueco. Sin el
+            // callback, ese ajuste no llegaría nunca al bot y correría con su 3 sin que
+            // nadie viera por qué (§3.2, fase 14).
+            // Los dos módulos en una consulta y no una por cada uno: este endpoint tiene
+            // un test que le cuenta las consultas, y con `for()` por módulo cada parámetro
+            // nuevo del catálogo le añadiría una.
             'parametros' => array_filter([
-                'semiancho_min' => self::entero(Setting::for('bot')['window_half_minutes'] ?? ''),
+                'semiancho_min' => self::entero($ajustes['bot']['window_half_minutes'] ?? ''),
+                'dias_atras_ganancia' => self::entero($ajustes['profitability']['lookback_days'] ?? ''),
             ], fn ($v) => $v !== null),
 
             'comercios' => $merchants->map(fn (Merchant $merchant) => [
