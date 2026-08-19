@@ -749,4 +749,90 @@ class CapacityCalendarTest extends TestCase
         // cerrado la pantalla no la paga.
         $this->assertSame(5, $consultas);
     }
+
+    /**
+     * La ganancia en el desglose (19/08/2026, a petición del cliente).
+     *
+     * Va partida igual que el volumen porque la pregunta que trae a alguien a este diálogo
+     * es la misma: **cuánto de lo que le tocaba a esta UT acabó en otra furgoneta** — sólo
+     * que en euros en vez de en metros cúbicos.
+     */
+    public function test_the_breakdown_splits_the_revenue_like_the_volume(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, 'Freddy GLS', 3.0, ['net_revenue' => 10.00]);
+        $this->package($lunes, 'Freddy GLS', 1.0, ['type' => RunPackage::TYPE_OTHER_ROUTE, 'net_revenue' => 4.15]);
+
+        $detalle = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->viewData('detalle');
+
+        $this->assertSame(14.15, $detalle['revenue']);
+        $this->assertSame(2, $detalle['priced']);
+
+        [$propio, $ajeno] = $detalle['parts'];
+        $this->assertSame(10.00, $propio['revenue']);
+        $this->assertSame(4.15, $ajeno['revenue']);
+    }
+
+    /**
+     * Un envío que no está en Envexpress no suma como cero, igual que el volumen: el
+     * importe va con **su propia** cuenta, que no tiene por qué ser la del volumen.
+     */
+    public function test_the_breakdown_counts_the_revenue_on_its_own_shipments(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $lunes = $this->runOn($this->lunes);
+        // Uno con las dos cosas, uno con volumen pero sin valoración, y uno al revés.
+        $this->package($lunes, 'Freddy GLS', 4.0, ['net_revenue' => 8.60]);
+        $this->package($lunes, 'Freddy GLS', 1.0, ['net_revenue' => null]);
+        $this->package($lunes, 'Freddy GLS', null, ['net_revenue' => 2.40]);
+
+        $detalle = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->viewData('detalle');
+
+        $this->assertSame(3, $detalle['shipments']);
+        $this->assertSame(2, $detalle['measured']);   // los que traen volumen
+        $this->assertSame(2, $detalle['priced']);     // los que traen ganancia, que son otros
+        $this->assertSame(11.00, $detalle['revenue']);
+    }
+
+    /** Sin una sola valoración el importe es «no se sabe», no 0,00 €. */
+    public function test_a_day_without_any_revenue_shows_no_amount(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, 'Freddy GLS', 4.0, ['net_revenue' => null]);
+
+        $componente = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString());
+
+        $this->assertNull($componente->viewData('detalle')['revenue']);
+        $componente->assertDontSee('0,00 €');
+    }
+
+    /**
+     * **«De sus rutas», nunca «del día»** (§7, fase 13.C, regla 2). Aquí sólo están los
+     * envíos de esta UT: rotularlo como la ganancia del día sería aún más falso que en la
+     * pantalla de la jornada, donde al menos están todas las rutas.
+     */
+    public function test_the_amount_is_labelled_as_this_courier_routes(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, 'Freddy GLS', 4.0, ['net_revenue' => 8.60]);
+
+        $componente = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString());
+
+        $componente->assertSee('Ganancia de sus rutas');
+        $componente->assertSee('8,60 €');
+        $componente->assertDontSee('Ganancia del día');
+    }
 }

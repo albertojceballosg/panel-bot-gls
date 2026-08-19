@@ -669,7 +669,7 @@ docker compose logs -f vite
 > Lo único que queda abierto de la 6 a la 11 es **6.D**, el backfill del `codigo`, que es mejora
 > y no requisito (§8).
 
-**La suite son 441 tests** (1.295 aserciones) el 19/08/2026, sobre Postgres. Es la cifra
+**La suite son 445 tests** (1.308 aserciones) el 19/08/2026, sobre Postgres. Es la cifra
 que hay que ver pasar antes de dar cualquier cosa por terminada, no la inspección del código.
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -2142,6 +2142,13 @@ Dónde quedó cada una:
   listado —`Código · Comercio · Hora cinta · Apunta a · Ganancia`—. Un envío sin valoración es
   **«—», no «0,00 €»**: en una fila suelta el cero se lee como un envío que no se cobró, que
   es peor mentira que en un total.
+- **En el desglose de una celda del calendario de capacidades** (19/08/2026, a petición del
+  cliente): «Ganancia de sus rutas» bajo la ocupación, y **partida igual que el volumen**
+  entre «De su ruta» y «Fuera de su ruta». Ahí la partición es lo que vale: dice **cuánto
+  dinero acabó en otra furgoneta**, que es la misma pregunta del diálogo en euros en vez de
+  en m³. El 07/08/2026, Benjamin GLS: 1.011,86 € sobre 52 de 59 envíos, de los que 19,32 €
+  se fueron fuera de su ruta. Se rotula **«de sus rutas»**, que aquí es todavía más
+  importante: sólo están los envíos de esa UT.
 - **También en «Pasaron con su ruta»**, la tabla plegada de los que fueron donde debían. No es
   simetría por gusto: ahí está la mayoría de la jornada y con ella **casi toda la ganancia de
   la ruta**, así que sin esas dos columnas el importe del encabezado no se puede cuadrar
@@ -2156,7 +2163,14 @@ que esta pantalla dejó de hacer. Y el par suma/cuenta viaja siempre junto, con 
 usaba el calendario de capacidades: `sum(net_revenue)` con `count(net_revenue)` al lado, que
 no cuenta los nulos y es el denominador honesto. Nueve tests en `IncidentRunScreenTest` fijan
 las dos reglas, el «sin dato», el «—» de una fila sin valoración —en las dos tablas—, el
-código en la fila y que una jornada anterior a la v4 no pinta ni un euro.
+código en la fila y que una jornada anterior a la v4 no pinta ni un euro; otros cuatro en
+`CapacityCalendarTest` fijan el reparto del diálogo, que el importe se cuenta **sobre sus
+propios envíos** —no sobre los que traen volumen, que son otros— y el rótulo.
+
+**Ganancia, no «rentabilidad».** El cliente la pide con ese nombre y en la conversación vale,
+pero **ninguna pantalla la rotula así**: la rentabilidad es el margen y el margen necesita el
+coste, que quedó fuera del contrato (§3.1). Poner «Rentabilidad» sobre una cifra que es
+facturación bruta invitaría a leer 1.011,86 € como beneficio.
 
 **13.D — Permisos.** Ninguno nuevo, como estaba previsto: es más información dentro de la
 pantalla de incidencias, que ya tiene su `incidents.view` (fase 12).

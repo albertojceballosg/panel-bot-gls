@@ -263,6 +263,12 @@ new #[Layout('components.layouts.app')] class extends Component
             ->selectRaw('sum(run_packages.volume_m3) as volumen')
             ->selectRaw('count(*) as envios')
             ->selectRaw('count(run_packages.volume_m3) as con_volumen')
+
+            // Lo facturado sin IVA por esos mismos paquetes, con su cobertura al lado
+            // (§7, fase 13.C): `count` de la columna no cuenta los nulos, y un envío que
+            // no está en Envexpress es «no se sabe», no cero.
+            ->selectRaw('sum(run_packages.net_revenue) as ganancia')
+            ->selectRaw('count(run_packages.net_revenue) as con_ganancia')
             ->get()
             ->keyBy('parte');
 
@@ -279,6 +285,11 @@ new #[Layout('components.layouts.app')] class extends Component
         $medidas = $partes->filter(fn ($p) => $p->volumen !== null);
         $total = $medidas->isEmpty() ? null : (float) $medidas->sum(fn ($p) => (float) $p->volumen);
 
+        // Mismo trato que el volumen, por el mismo motivo: si ni un envío trae valoración
+        // de Envexpress, el importe es «no se sabe» y no 0,00 € (§3.1).
+        $facturado = $partes->filter(fn ($p) => $p->ganancia !== null);
+        $ganancia = $facturado->isEmpty() ? null : (float) $facturado->sum(fn ($p) => (float) $p->ganancia);
+
         $parte = function (string $clave, string $label, string $help) use ($partes, $total, $capacidad) {
             $fila = $partes[$clave] ?? null;
             $volumen = $fila === null || $fila->volumen === null ? null : (float) $fila->volumen;
@@ -286,6 +297,11 @@ new #[Layout('components.layouts.app')] class extends Component
             return [
                 'label' => $label,
                 'help' => $help,
+
+                // Cuánto dinero hay en esta parte del reparto. En «Fuera de su ruta» es la
+                // pregunta de negocio entera: cuánto se fue con otra furgoneta.
+                'revenue' => $fila === null || $fila->ganancia === null ? null : (float) $fila->ganancia,
+                'priced' => $fila === null ? 0 : (int) $fila->con_ganancia,
 
                 // Qué parte del volumen del día es. Es el reparto que se viene a
                 // ver, y por eso manda en el diálogo: los dos suman 100 %.
@@ -321,6 +337,12 @@ new #[Layout('components.layouts.app')] class extends Component
             'usage' => $total === null || $capacidad === null || $capacidad <= 0 ? null : $total / $capacidad,
             'shipments' => $partes->sum(fn ($p) => (int) $p->envios),
             'measured' => $partes->sum(fn ($p) => (int) $p->con_volumen),
+
+            // Lo que dejaron las rutas de esta UT ese día, y sobre cuántos envíos se sumó.
+            // **No es la ganancia del día de la agencia**: aquí sólo están los envíos de
+            // esta UT, y ni siquiera todos los que tienen ruta (§7, fase 13.C, regla 2).
+            'revenue' => $ganancia,
+            'priced' => $partes->sum(fn ($p) => (int) $p->con_ganancia),
             'parts' => [
                 $parte('own', 'De su ruta', 'Pasaron en la tanda de su propia ruta'),
                 $parte('foreign', 'Fuera de su ruta', 'Acabaron en la tanda de otra ruta o descolgados'),
@@ -475,6 +497,11 @@ new #[Layout('components.layouts.app')] class extends Component
     // La ocupación en porcentaje y sin decimales: lo que se busca de un vistazo
     // es si el día pasó del 100 %, no si fue un 31,4 % o un 31,7 %.
     $ocupacion = fn (float $u) => number_format($u * 100, 0, ',', '.').' %';
+
+    // Euros con sus dos decimales, y «—» cuando no se sabe: el envío no está en
+    // Envexpress y un 0,00 € diría que no dejó nada (§3.1). Mismo signo que usa el
+    // detalle de la jornada, para que las dos pantallas se lean igual.
+    $euros = fn (?float $i) => $i === null ? '—' : number_format($i, 2, ',', '.').' €';
 @endphp
 
 <div>
@@ -705,7 +732,9 @@ new #[Layout('components.layouts.app')] class extends Component
                 <a href="{{ route('settings', ['module' => 'capacity-calendar']) }}" wire:navigate
                    class="font-medium underline underline-offset-2">Configuraciones · Calendario de capacidades</a>.
                 <strong>Pulsa un porcentaje</strong> para ver el detalle del día: los volúmenes en m³, los
-                envíos y cuántos de ellos traían volumen.
+                envíos, cuántos de ellos traían volumen y <strong>lo que dejaron sus rutas</strong> —lo
+                facturado sin IVA, partido igual que el volumen, para ver cuánto dinero acabó en otra
+                furgoneta—.
                 El ▲ marca los días que se pasan de la capacidad declarada de la furgoneta.
                 Cuando el portal no da el volumen de todos los envíos ese hueco no se suma como cero
                 —significaría «no lo sé»—, así que la ocupación real puede ser mayor que la que se ve.
@@ -722,21 +751,44 @@ new #[Layout('components.layouts.app')] class extends Component
         <x-ui.modal :title="$detalle['label']"
                     :description="ucfirst($detalle['day']->translatedFormat('l j \d\e F \d\e Y'))"
                     close="closeDetail">
-            <div class="flex items-baseline justify-between gap-4 rounded-lg bg-slate-50 px-4 py-3">
-                <div>
-                    <p class="text-sm font-medium text-shell-900">Ocupación del día</p>
-                    <p class="text-xs text-slate-500">
-                        {{ $vol($detalle['volume']) }} m³
-                        @if ($detalle['capacity'] !== null)
-                            de {{ $vol($detalle['capacity']) }} m³ declarados
-                        @endif
-                        · {{ $detalle['shipments'] }} {{ $detalle['shipments'] === 1 ? 'envío' : 'envíos' }}
-                    </p>
+            <div class="rounded-lg bg-slate-50 px-4 py-3">
+                <div class="flex items-baseline justify-between gap-4">
+                    <div>
+                        <p class="text-sm font-medium text-shell-900">Ocupación del día</p>
+                        <p class="text-xs text-slate-500">
+                            {{ $vol($detalle['volume']) }} m³
+                            @if ($detalle['capacity'] !== null)
+                                de {{ $vol($detalle['capacity']) }} m³ declarados
+                            @endif
+                            · {{ $detalle['shipments'] }} {{ $detalle['shipments'] === 1 ? 'envío' : 'envíos' }}
+                        </p>
+                    </div>
+
+                    <span class="text-2xl font-semibold text-shell-900 tabular-nums">
+                        {{ $detalle['usage'] === null ? '—' : $ocupacion($detalle['usage']) }}
+                    </span>
                 </div>
 
-                <span class="text-2xl font-semibold text-shell-900 tabular-nums">
-                    {{ $detalle['usage'] === null ? '—' : $ocupacion($detalle['usage']) }}
-                </span>
+                {{-- Lo que dejaron sus rutas ese día, con el número de envíos sobre los que
+                     se sumó pegado al importe (§7, fase 13.C, regla 1). **«De sus rutas» y
+                     no «del día»**: aquí sólo están los envíos de esta UT, así que llamarlo
+                     la ganancia del día sería aún más falso que en la pantalla de la
+                     jornada. Ganancia y no rentabilidad: es lo facturado sin IVA, y el
+                     margen necesitaría el coste, que no viaja en el contrato (§3.1). --}}
+                <div class="mt-3 flex items-baseline justify-between gap-4 border-t border-slate-200 pt-3">
+                    <div>
+                        <p class="text-sm font-medium text-shell-900">Ganancia de sus rutas</p>
+                        <p class="text-xs text-slate-500">
+                            Lo facturado sin IVA
+                            · {{ $detalle['priced'] }} de {{ $detalle['shipments'] }}
+                            {{ $detalle['shipments'] === 1 ? 'envío' : 'envíos' }} con dato
+                        </p>
+                    </div>
+
+                    <span class="text-2xl font-semibold text-shell-900 tabular-nums">
+                        {{ $euros($detalle['revenue']) }}
+                    </span>
+                </div>
             </div>
 
             <dl class="mt-4 divide-y divide-slate-100">
@@ -757,6 +809,14 @@ new #[Layout('components.layouts.app')] class extends Component
                                 @if ($parte['usage'] !== null)
                                     · {{ $ocupacion($parte['usage']) }} de la furgoneta
                                 @endif
+                            </span>
+
+                            {{-- En su propia línea y con su propia cuenta: en «Fuera de su
+                                 ruta» esto es cuánto dinero acabó en otra furgoneta, que es
+                                 la pregunta que trae a nadie a este diálogo. --}}
+                            <span class="block text-xs text-slate-400">
+                                {{ $euros($parte['revenue']) }} ·
+                                {{ $parte['priced'] }} con ganancia
                             </span>
                         </dd>
                     </div>
