@@ -290,7 +290,7 @@ new #[Layout('components.layouts.app')] class extends Component
         $facturado = $partes->filter(fn ($p) => $p->ganancia !== null);
         $ganancia = $facturado->isEmpty() ? null : (float) $facturado->sum(fn ($p) => (float) $p->ganancia);
 
-        $parte = function (string $clave, string $label, string $help) use ($partes, $total, $capacidad, $ganancia) {
+        $parte = function (string $clave, string $label, string $help) use ($partes, $total, $capacidad) {
             $fila = $partes[$clave] ?? null;
             $volumen = $fila === null || $fila->volumen === null ? null : (float) $fila->volumen;
 
@@ -303,13 +303,6 @@ new #[Layout('components.layouts.app')] class extends Component
                 'revenue' => $fila === null || $fila->ganancia === null ? null : (float) $fila->ganancia,
                 'priced' => $fila === null ? 0 : (int) $fila->con_ganancia,
 
-                // Y **el reparto del dinero es el suyo, no el del volumen**: los dos
-                // porcentajes se parecen pero no tienen por qué coincidir, porque un envío
-                // voluminoso puede facturar poco y al revés. Se calcula sobre los envíos
-                // con valoración, que no son los mismos que traen volumen.
-                'revenue_share' => $fila === null || $fila->ganancia === null || $ganancia === null || $ganancia <= 0
-                    ? null
-                    : (float) $fila->ganancia / $ganancia,
 
                 // Qué parte del volumen del día es. Es el reparto que se viene a
                 // ver, y por eso manda en el diálogo: los dos suman 100 %.
@@ -831,19 +824,22 @@ new #[Layout('components.layouts.app')] class extends Component
                                 @endif
                             </div>
 
-                            {{-- En «Fuera de su ruta» esta columna es la pregunta de negocio
-                                 entera: cuánto dinero acabó en otra furgoneta. --}}
-                            <div>
+                            {{-- En euros y no en porcentaje (19/08/2026, decisión del
+                                 cliente): en «Fuera de su ruta» lo que se quiere ver es el
+                                 dinero que acabó en otra furgoneta, no qué fracción del día
+                                 era. El importe es la cifra, y su cuenta va debajo.
+
+                                 **«Neta» aquí es «sin IVA», no «después de costes»**: el
+                                 coste no viaja en el contrato (§3.1) y esto no es el margen.
+                                 De ahí el título, que lo dice al pasar por encima. --}}
+                            <div title="Lo facturado por esos envíos sin IVA. No es el margen: el coste no llega a este panel.">
                                 <span class="block text-lg font-semibold text-shell-900">
-                                    {{ $parte['revenue_share'] === null ? '—' : $ocupacion($parte['revenue_share']) }}
-                                </span>
-                                <span class="block text-[11px] font-medium tracking-wide text-slate-400 uppercase">
-                                    de la ganancia
-                                </span>
-                                <span class="mt-0.5 block text-xs text-slate-400">
                                     {{ $euros($parte['revenue']) }}
                                 </span>
-                                <span class="block text-xs text-slate-400">
+                                <span class="block text-[11px] font-medium tracking-wide text-slate-400 uppercase">
+                                    ganancia neta
+                                </span>
+                                <span class="mt-0.5 block text-xs text-slate-400">
                                     {{ $parte['priced'] }} con dato
                                 </span>
                             </div>

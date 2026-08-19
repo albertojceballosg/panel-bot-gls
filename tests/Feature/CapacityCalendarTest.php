@@ -837,11 +837,11 @@ class CapacityCalendarTest extends TestCase
     }
 
     /**
-     * **El reparto del dinero es el suyo, no el del volumen.** Se parecen casi siempre, y
-     * justo por eso hay que poder verlos separados: un envío voluminoso puede facturar poco
-     * y uno pequeño mucho. Aquí el volumen va 90/10 y la ganancia 25/75.
+     * **El dinero no sigue al volumen**, y por eso cada parte enseña su importe y no una
+     * fracción del volumen: un envío voluminoso puede facturar poco y uno pequeño mucho.
+     * Aquí el volumen va 90/10 y el dinero justo al revés.
      */
-    public function test_the_revenue_split_is_its_own_and_not_the_volume_one(): void
+    public function test_the_revenue_of_a_part_does_not_follow_its_volume(): void
     {
         Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
 
@@ -851,22 +851,24 @@ class CapacityCalendarTest extends TestCase
         // …y uno pequeño y caro que se fue con otra.
         $this->package($lunes, 'Freddy GLS', 1.0, ['type' => RunPackage::TYPE_OTHER_ROUTE, 'net_revenue' => 15.00]);
 
-        [$propio, $ajeno] = Livewire::test('capacity-calendar')
-            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
-            ->viewData('detalle')['parts'];
+        $componente = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString());
+
+        [$propio, $ajeno] = $componente->viewData('detalle')['parts'];
 
         $this->assertSame(0.9, $propio['share']);
-        $this->assertSame(0.25, $propio['revenue_share']);
+        $this->assertSame(5.00, $propio['revenue']);
 
         $this->assertSame(0.1, $ajeno['share']);
-        $this->assertSame(0.75, $ajeno['revenue_share']);
+        $this->assertSame(15.00, $ajeno['revenue']);
 
-        // Y el reparto del dinero cierra en 100 %, como el del volumen.
-        $this->assertSame(1.0, $propio['revenue_share'] + $ajeno['revenue_share']);
+        // Lo que se lee en el diálogo es el importe, no un porcentaje del dinero.
+        $componente->assertSee('15,00 €');
+        $componente->assertSee('ganancia neta');
     }
 
-    /** Sin valoraciones no hay reparto de dinero que enseñar: «—», no un 0 %. */
-    public function test_without_any_revenue_there_is_no_revenue_split(): void
+    /** Sin valoraciones el importe de la parte es «—», no 0,00 €. */
+    public function test_a_part_without_any_revenue_shows_a_dash(): void
     {
         Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
 
@@ -874,14 +876,16 @@ class CapacityCalendarTest extends TestCase
         $this->package($lunes, 'Freddy GLS', 4.0, ['net_revenue' => null]);
         $this->package($lunes, 'Freddy GLS', 1.0, ['type' => RunPackage::TYPE_OTHER_ROUTE, 'net_revenue' => null]);
 
-        [$propio, $ajeno] = Livewire::test('capacity-calendar')
-            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
-            ->viewData('detalle')['parts'];
+        $componente = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString());
 
-        $this->assertNull($propio['revenue_share']);
-        $this->assertNull($ajeno['revenue_share']);
+        [$propio, $ajeno] = $componente->viewData('detalle')['parts'];
 
-        // El del volumen sigue estando: son dos repartos independientes.
+        $this->assertNull($propio['revenue']);
+        $this->assertNull($ajeno['revenue']);
+        $componente->assertDontSee('0,00 €');
+
+        // El reparto del volumen sigue estando: no depende del dinero.
         $this->assertSame(0.8, $propio['share']);
     }
 }
