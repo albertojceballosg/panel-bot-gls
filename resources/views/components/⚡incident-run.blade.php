@@ -549,6 +549,21 @@ new #[Layout('components.layouts.app')] class extends Component
     }
 
     /**
+     * Un importe en euros, o «—» cuando no se sabe.
+     *
+     * El guion no es adorno: el envío no aparece en Envexpress y un `0,00 €` diría que no
+     * dejó nada (§3.1). Es el mismo signo que usa el listado en texto del bot, para que las
+     * dos pantallas se lean igual.
+     *
+     * Público y método del componente por lo mismo que `hora()`: la isla del listado se
+     * pinta en su propio ámbito y ahí no llegan las funciones de fuera.
+     */
+    public function euros(?float $importe): string
+    {
+        return $importe === null ? '—' : number_format($importe, 2, ',', '.').' €';
+    }
+
+    /**
      * Una sección por ruta dueña: sus dos clases de hallazgo separadas, lo firme
      * delante dentro de cada una, y **los paquetes que fueron donde debían**.
      *
@@ -804,7 +819,7 @@ new #[Layout('components.layouts.app')] class extends Component
                 @if ($balance['ganancia'] !== null)
                     <p class="text-xs text-slate-500">
                         Ganancia de las rutas:
-                        <strong class="font-semibold text-shell-900 tabular-nums">{{ number_format($balance['ganancia'], 2, ',', '.') }} €</strong>
+                        <strong class="font-semibold text-shell-900 tabular-nums">{{ $this->euros($balance['ganancia']) }}</strong>
                         sobre {{ $balance['con_ganancia'] }} de {{ $balance['envios'] }} envíos
                         · <span title="Los envíos de comercios que no están en el maestro no llegan en el payload, así que tampoco están en esta suma.">no incluye los envíos sin ruta</span>
                     </p>
@@ -889,7 +904,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                     @if ($ruta['ganancia'] !== null)
                                         <span class="whitespace-nowrap"
                                               title="Facturado sin IVA. {{ $ruta['paquetes'] - $ruta['con_ganancia'] }} de los {{ $ruta['paquetes'] }} envíos no tienen valoración en Envexpress y no suman.">
-                                            · <span class="font-semibold text-shell-900 tabular-nums">{{ number_format($ruta['ganancia'], 2, ',', '.') }} €</span>
+                                            · <span class="font-semibold text-shell-900 tabular-nums">{{ $this->euros($ruta['ganancia']) }}</span>
                                             ({{ $ruta['con_ganancia'] }} de {{ $ruta['paquetes'] }} envíos)
                                         </span>
                                     @else
@@ -951,7 +966,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                     @php $ids = $filas->reject->isHandled()->pluck('id')->map('strval')->all(); @endphp
 
                                     <div class="mb-5 overflow-x-auto">
-                                        <table class="w-full min-w-[34rem] text-sm">
+                                        <table class="w-full min-w-[52rem] text-sm">
                                             <thead>
                                                 <tr class="text-left text-xs text-slate-500">
                                                     {{-- Un lote de paquetes del mismo comercio arrastra
@@ -974,6 +989,11 @@ new #[Layout('components.layouts.app')] class extends Component
                                                         </th>
                                                     @endif
 
+                                                    {{-- Primero el código, como en el listado en texto del
+                                                         bot: es con lo que se busca el paquete en el portal,
+                                                         y quien contrasta las dos pantallas va leyendo por
+                                                         esta columna. --}}
+                                                    <th class="pb-2 font-medium">Código</th>
                                                     <th class="pb-2 font-medium">Comercio</th>
                                                     <th class="pb-2 font-medium">Hora cinta</th>
                                                     @if ($acusa)
@@ -983,6 +1003,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                                              ruta más compatible, no un hecho comprobado. --}}
                                                         <th class="pb-2 font-medium">Apunta a</th>
                                                     @endif
+                                                    <th class="pb-2 text-right font-medium">Ganancia</th>
                                                     <th class="pb-2 font-medium">Fiabilidad</th>
                                                     <th class="pb-2 font-medium">Gestión</th>
                                                     <th class="pb-2"><span class="sr-only">Acciones</span></th>
@@ -1007,12 +1028,26 @@ new #[Layout('components.layouts.app')] class extends Component
                                                             </td>
                                                         @endif
 
+                                                        {{-- `select-all` para poder llevárselo al buscador del
+                                                             portal de un clic: son 14 dígitos y teclearlos a mano
+                                                             es donde se cuela el error. --}}
+                                                        <td class="py-2 pr-3 font-mono text-xs tabular-nums select-all">
+                                                            {{ $fila->barcode ?? '—' }}
+                                                        </td>
+
                                                         <td class="py-2 pr-3">{{ $fila->merchant_name }}</td>
                                                         <td class="py-2 pr-3 tabular-nums">{{ $this->hora($fila->belt_time) }}</td>
 
                                                         @if ($acusa)
                                                             <td class="py-2 pr-3">{{ $fila->observed_route_name ?? '—' }}</td>
                                                         @endif
+
+                                                        {{-- Lo facturado por **este** envío, sin IVA. Un «—» es que
+                                                             no aparece en Envexpress: no se sabe, no es cero. --}}
+                                                        <td class="py-2 pr-3 text-right tabular-nums"
+                                                            @if ($fila->net_revenue === null) title="Este envío no aparece en Envexpress: no se sabe lo que se facturó por él." @endif>
+                                                            {{ $this->euros($fila->net_revenue) }}
+                                                        </td>
 
                                                         <td class="py-2 pr-3">
                                                             @if ($fila->isConclusive())
@@ -1095,7 +1130,12 @@ new #[Layout('components.layouts.app')] class extends Component
                                                     @unless ($fila->isConclusive())
                                                         @if (filled($motivos = \App\Support\IncidentPresenter::reasons($fila)))
                                                             <tr>
-                                                                <td colspan="{{ $acusa ? 6 : 5 }}" class="pb-2 text-xs text-slate-400">
+                                                                {{-- Código, Comercio, Hora, Ganancia, Fiabilidad,
+                                                                     Gestión y Acciones, más «Apunta a» y la casilla
+                                                                     cuando las hay. Antes iba a ojo y se quedaba
+                                                                     corta con la columna de marcar puesta. --}}
+                                                                <td colspan="{{ 7 + ($acusa ? 1 : 0) + ($this->canManage() ? 1 : 0) }}"
+                                                                    class="pb-2 text-xs text-slate-400">
                                                                     {{ implode('. ', $motivos) }}.
                                                                 </td>
                                                             </tr>
@@ -1220,6 +1260,10 @@ new #[Layout('components.layouts.app')] class extends Component
                     @foreach (array_filter([
                         ['Código de barras', $detalle->barcode ?? '—'],
                         ['Hora de cinta (UTC)', $detalle->belt_time ? $this->hora($detalle->belt_time) : 'Sin paso por la cinta'],
+
+                        // Sin IVA, de Envexpress. Un «—» es que el envío no está allí: no
+                        // se sabe lo que se facturó, no que fuera cero (§3.1).
+                        ['Ganancia (sin IVA)', $this->euros($detalle->net_revenue)],
                         ['Ruta del comercio', $detalle->assigned_route_name ?? '—'],
                         ['UT aquel día', $detalle->assigned_courier_name ?? '—'],
 

@@ -1172,4 +1172,38 @@ class IncidentRunScreenTest extends TestCase
         $respuesta->assertDontSee('Ganancia de las rutas:');
         $respuesta->assertDontSee('€');
     }
+
+    /**
+     * El código de barras en la propia fila: es con lo que se busca el paquete en el portal,
+     * y tenerlo que sacar abriendo el diálogo de una en una hace impracticable contrastar
+     * una jornada contra el listado en texto del bot.
+     */
+    public function test_each_incident_row_carries_its_barcode(): void
+    {
+        $corrida = $this->storedRun();
+        $incidencia = $this->incident($corrida, '1334043165');
+
+        $this->get($this->url())->assertOk()->assertSee($incidencia->barcode);
+    }
+
+    /** Lo que dejó **ese** envío, en su fila. */
+    public function test_each_incident_row_carries_its_revenue(): void
+    {
+        $corrida = $this->storedRun();
+        $this->incident($corrida, '1', revenue: 8.60);
+
+        $this->get($this->url())->assertOk()->assertSee('8,60 €');
+    }
+
+    /**
+     * Un envío que no está en Envexpress se pinta «—», no «0,00 €». En una fila suelta el
+     * cero es todavía más engañoso que en un total: parece un envío que no se cobró.
+     */
+    public function test_an_incident_without_revenue_shows_a_dash_not_a_zero(): void
+    {
+        $corrida = $this->storedRun();
+        $this->incident($corrida, '1', revenue: null);
+
+        $this->get($this->url())->assertOk()->assertDontSee('0,00 €');
+    }
 }
