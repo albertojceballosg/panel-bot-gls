@@ -2,8 +2,8 @@
 
 namespace Tests\Feature;
 
-use App\Models\RunPackage;
 use App\Models\IncidentRun;
+use App\Models\RunPackage;
 
 /**
  * Jornadas e incidencias para los tests de pantalla.
@@ -50,6 +50,7 @@ trait MakesIncidents
         ?string $observedRoute = 'Ruta 1',
         array $reasons = ['ruta_dispersa'],
         array $compatible = [],
+        ?float $revenue = null,
     ): RunPackage {
         return RunPackage::create([
             'incident_run_id' => $run->id,
@@ -64,6 +65,8 @@ trait MakesIncidents
             'type' => $type,
             'belt_time' => '2026-08-03T19:15:27+00:00',
             'deviation_minutes' => 22.3,
+            // Nula por defecto: es lo que trae toda jornada anterior a la v4 (§3.1).
+            'net_revenue' => $revenue,
             'compatible_routes' => $compatible,
             'confidence' => $confidence,
             'confidence_reasons' => $confidence === RunPackage::CONFIDENCE_HIGH ? [] : $reasons,
@@ -81,6 +84,7 @@ trait MakesIncidents
         ?string $assignedRoute = 'Ruta 3',
         ?string $courier = 'Freddy GLS',
         ?string $beltTime = '2026-08-03T19:55:02+00:00',
+        ?float $revenue = null,
     ): RunPackage {
         return RunPackage::create([
             'incident_run_id' => $run->id,
@@ -90,6 +94,7 @@ trait MakesIncidents
             'assigned_route_name' => $assignedRoute,
             'assigned_courier_name' => $courier,
             'belt_time' => $beltTime,
+            'net_revenue' => $revenue,
             'compatible_routes' => [],
             'confidence_reasons' => [],
         ]);

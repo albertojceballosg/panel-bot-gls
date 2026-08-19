@@ -32,7 +32,7 @@ class RunPackage extends Model
         'merchant_id', 'merchant_name',
         'assigned_route_id', 'assigned_route_name', 'assigned_courier_name',
         'observed_route_id', 'observed_route_name',
-        'type', 'belt_time', 'deviation_minutes', 'volume_m3',
+        'type', 'belt_time', 'deviation_minutes', 'volume_m3', 'net_revenue',
         'compatible_routes', 'batch_shared_routes', 'confidence', 'confidence_reasons',
         'withdrawn_at',
     ];
@@ -56,6 +56,8 @@ class RunPackage extends Model
             'deviation_minutes' => 'float',
             // Nulo si el portal no dio el dato. No confundir con cero: ver la migración.
             'volume_m3' => 'float',
+            // Ídem: nulo es «el envío no está en Envexpress», no «no dejó nada».
+            'net_revenue' => 'float',
             'compatible_routes' => 'array',
             'batch_shared_routes' => 'array',
             'confidence_reasons' => 'array',

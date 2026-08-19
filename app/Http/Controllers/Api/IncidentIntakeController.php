@@ -85,6 +85,11 @@ class IncidentIntakeController
             'paquetes.*.volumen_m3' => ['nullable', 'numeric', 'min:0'],
             'incidencias.*.volumen_m3' => ['nullable', 'numeric', 'min:0'],
 
+            // Euros facturados sin IVA, de Envexpress. Nulo cuando el envío no aparece
+            // allí, nunca negativo. Opcional porque un bot anterior a la v4 no lo manda.
+            'paquetes.*.ganancia' => ['nullable', 'numeric', 'min:0'],
+            'incidencias.*.ganancia' => ['nullable', 'numeric', 'min:0'],
+
             'alertas' => ['present', 'array'],
             'alertas.*.tipo' => ['required', 'string'],
             'alertas.*.texto' => ['required', 'string'],
@@ -254,6 +259,11 @@ class IncidentIntakeController
             // Nulo si el portal no lo trajo. El bot ya convierte a nulo el cero que devuelve
             // GLS, porque ahí un cero es "no lo sé" y no "no ocupa nada" (ver la migración).
             'volume_m3' => $row['volumen_m3'] ?? null,
+
+            // v4: lo facturado por el envío sin IVA. Nulo si no aparece en Envexpress —el
+            // bot no inventa un cero—, y nulo también en toda jornada anterior a la v4, que
+            // no traía el campo. Las dos cosas se leen igual: «no se sabe» (ver la migración).
+            'net_revenue' => $row['ganancia'] ?? null,
             'compatible_routes' => $row['rutas_compatibles'] ?? [],
 
             // v3: quiénes descargaban en el mismo bloque. Ausente en los payloads

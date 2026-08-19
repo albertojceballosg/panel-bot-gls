@@ -2,10 +2,11 @@
 
 namespace Tests\Feature;
 
-use App\Models\RunPackage;
-use App\Support\PermissionCatalog;
 use App\Models\PickupRoute;
+use App\Models\RunPackage;
 use App\Models\User;
+use App\Support\PermissionCatalog;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -19,7 +20,7 @@ use Tests\TestCase;
  */
 class IncidentRunScreenTest extends TestCase
 {
-    use RefreshDatabase, MakesIncidents;
+    use MakesIncidents, RefreshDatabase;
 
     /** Quien mira la jornada: hace falta su nombre para lo que firma al atender. */
     private User $user;
@@ -282,7 +283,7 @@ class IncidentRunScreenTest extends TestCase
         $corrida = $this->storedRun();
         $incidencia = $this->incident($corrida, '1');
 
-        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
             ->call('show', $incidencia->id)
             ->assertSee('Código de barras')
             ->assertSee($incidencia->barcode)
@@ -346,7 +347,7 @@ class IncidentRunScreenTest extends TestCase
         $corrida = $this->storedRun();
         $paquete = $this->package($corrida, 'ok1');
 
-        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
             ->call('show', $paquete->id)
             ->assertSee('Pasó por la cinta con el grueso de su ruta')
             // Del modal, no del desplegable de arriba, que sí habla de ambas.
@@ -444,7 +445,7 @@ class IncidentRunScreenTest extends TestCase
         $corrida = $this->storedRun();
         $incidencia = $this->incident($corrida, '1');
 
-        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
             ->call('manage', $incidencia->id)
             ->set('handled', true)
             ->call('saveHandling');
@@ -471,7 +472,7 @@ class IncidentRunScreenTest extends TestCase
 
         $cuando = $incidencia->handled_at;
 
-        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
             ->call('manage', $incidencia->id)
             ->set('note', 'Añado un detalle más.')
             ->call('saveHandling');
@@ -497,7 +498,7 @@ class IncidentRunScreenTest extends TestCase
             'handled_by_name' => 'Quien fuera',
         ])->save();
 
-        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
             ->call('manage', $incidencia->id)
             ->set('handled', false)
             ->call('saveHandling');
@@ -593,9 +594,9 @@ class IncidentRunScreenTest extends TestCase
 
         // El id llega del cliente: sin acotar por jornada se podría anotar
         // cualquier fila pasando otro número.
-        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $this->expectException(ModelNotFoundException::class);
 
-        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
             ->call('manage', $otroDia->id);
     }
 
@@ -604,7 +605,7 @@ class IncidentRunScreenTest extends TestCase
         $corrida = $this->storedRun();
         $incidencia = $this->incident($corrida, '1');
 
-        \Livewire\Livewire::test('incident-run', ['date' => '2026-08-03'])
+        Livewire::test('incident-run', ['date' => '2026-08-03'])
             ->call('manage', $incidencia->id)
             ->set('note', str_repeat('a', 2001))
             ->call('saveHandling')
@@ -1106,5 +1107,69 @@ class IncidentRunScreenTest extends TestCase
 
         // Y el navegador vacía su selección al recibir esto.
         $componente->assertDispatched('seleccion-limpia');
+    }
+
+    /**
+     * Fase 13.C, regla 1: **el importe nunca va solo**. Sin decir sobre cuántos envíos se
+     * sumó, una ruta a la que le faltan valoraciones de Envexpress parece menos rentable de
+     * lo que fue, y nadie ve que el dato falta.
+     */
+    public function test_route_revenue_always_says_over_how_many_shipments(): void
+    {
+        $corrida = $this->storedRun();
+        $this->package($corrida, '1', assignedRoute: 'Ruta 3', revenue: 400.00);
+        $this->package($corrida, '2', assignedRoute: 'Ruta 3', revenue: 205.95);
+        // El tercero no está en Envexpress: suma cero euros pero sí cuenta como envío.
+        $this->package($corrida, '3', assignedRoute: 'Ruta 3', revenue: null);
+
+        $html = Livewire::test('incident-run', ['date' => '2026-08-03'])->html();
+
+        $this->assertStringContainsString('605,95 €', $html);
+        $this->assertStringContainsString('(2 de 3 envíos)', $html);
+    }
+
+    /**
+     * Un nulo es «no se sabe», no cero. Una ruta sin ninguna valoración no puede rotularse
+     * «0,00 €»: eso afirmaría que no dejó nada.
+     */
+    public function test_a_route_without_any_revenue_does_not_show_zero(): void
+    {
+        $corrida = $this->storedRun();
+        $this->package($corrida, '1', assignedRoute: 'Ruta 3', revenue: null);
+
+        $html = Livewire::test('incident-run', ['date' => '2026-08-03'])->html();
+
+        $this->assertStringContainsString('sin dato de ganancia', $html);
+        $this->assertStringNotContainsString('0,00 €', $html);
+    }
+
+    /**
+     * Fase 13.C, regla 2: esta suma sólo tiene los envíos **con ruta**. El 07/08/2026 eran
+     * 2.615,16 € de los 4.871,10 € del día, así que llamarla «del día» diría la mitad.
+     */
+    public function test_the_day_total_is_labelled_as_routes_not_as_the_day(): void
+    {
+        $corrida = $this->storedRun();
+        $this->package($corrida, '1', assignedRoute: 'Ruta 3', revenue: 400.00);
+        $this->package($corrida, '2', assignedRoute: 'Ruta 4', revenue: 205.95);
+
+        $respuesta = $this->get($this->url())->assertOk();
+
+        $respuesta->assertSee('Ganancia de las rutas:');
+        $respuesta->assertSee('605,95 €');
+        $respuesta->assertSee('sobre 2 de 2 envíos');
+        $respuesta->assertDontSee('Ganancia del día');
+    }
+
+    /** Una jornada anterior a la v4 no trae el campo: la pantalla calla, no inventa un cero. */
+    public function test_a_pre_v4_run_shows_no_revenue_at_all(): void
+    {
+        $corrida = $this->storedRun();
+        $this->incident($corrida, '1');
+
+        $respuesta = $this->get($this->url())->assertOk();
+
+        $respuesta->assertDontSee('Ganancia de las rutas:');
+        $respuesta->assertDontSee('€');
     }
 }

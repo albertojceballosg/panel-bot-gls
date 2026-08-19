@@ -217,6 +217,19 @@ concreta: *un paquete pasó por la cinta en la tanda de otra ruta* — o sea, lo
 le tocaba. No es el desvío horario contra la mediana, que el bot calcula aparte y manda como
 campo de apoyo.
 
+> **`version` va por 4 desde el 19/08/2026, y los dos lados la hablan.** La v4 **añade un solo
+> campo**: `ganancia` en cada elemento de `paquetes[]` —y por herencia en `incidencias[]`, que
+> se construye encima—. Es aditiva: una v3 sigue entrando y queda con la ganancia a nulo.
+> **Este panel la guarda en `run_packages.net_revenue` y la enseña por ruta desde el
+> 19/08/2026** (fase 13); fijado en `IncidentIntakeV4Test`. El bot la saca de **Envexpress
+> (Mensaglobal)**, el otro portal de la agencia, cruzando por el código de barras que ya venía
+> en el contrato como `codigo`. Este panel no habla con Envexpress ni tiene por qué: le llega
+> ya cruzado. La fase 13 de §7 lo desarrolla.
+>
+> **Lo que la v4 NO trae, por decisión del 19/08/2026:** ni el `coste` —se pidió la ganancia,
+> el margen ya se verá— ni totales de jornada. Los dos son aplazamientos conscientes; el
+> segundo tiene consecuencias para la pantalla, ver §8.
+>
 > **`version` va por 3 desde el 17/08/2026.** La v3 **añade** `rutas_misma_tanda`: las rutas
 > que descargaban en el mismo bloque que el paquete. Es aditiva —una v2 sigue entrando— y
 > nace de la pantalla: un hallazgo no concluyente por `tanda_compartida` se explicaba con
@@ -263,6 +276,7 @@ campo de apoyo.
       "hora_cinta": "2026-08-03T19:52:52+00:00",
       "desvio_min": 22.3,
       "volumen_m3": 0.129,
+      "ganancia": 8.60,
       "rutas_compatibles": [],
       "confianza": "baja",
       "motivo_confianza": ["ruta_dispersa"]
@@ -287,6 +301,7 @@ campo de apoyo.
 | `ruta_observada` | Desde la v2: la ruta **en cuya ventana** pasó el paquete, y sólo si es la única que encaja (antes, la dueña de la tanda por mayoría). Es la acusación, y **es `null` cuando `tipo` es `fuera_de_tanda`** — 115 de las 193 del 10/08. Son dos hallazgos distintos: uno señala a alguien y el otro no. No mezclarlos en la misma lista. |
 | `mensajero` | **Foto del día, no relación.** Texto, dentro de la ruta, a propósito: si el panel reasigna el conductor después, la incidencia debe seguir diciendo quién conducía aquel día. No enlazar contra `couriers` para pintarlo. |
 | `volumen_m3` | Volumen del envío en m³ (columna `volume_m3`). Añadido el 13/08/2026. **Nulo, no cero, cuando el portal no lo trae**: GLS devuelve `0` en parte de los envíos —29 de 493 el 03/08— y ahí un cero significa «no lo sé». Al sumarlo, la interfaz **tiene que decir sobre cuántos envíos** se hizo la suma, o dará a entender que una ruta ocupa menos de lo que ocupa. Opcional: un bot anterior a esa fecha no lo manda. |
+| `ganancia` | Desde la v4: **lo que se facturó por ese envío, sin IVA**, en euros. Sale de Envexpress: la suma de la columna `Precio` de sus valoraciones (servicio + suplementos). **No es el margen** — el margen es `ganancia − coste`. **Nula, no cero, cuando el envío no aparece en Envexpress**: 30 de 543 el 07/08/2026. Mismo criterio que `volumen_m3` y por el mismo motivo: un cero diría «no se ganó nada» y falsearía a la baja el total de una ruta. Quien la sume **tiene que decir sobre cuántos envíos**. Opcional: un bot anterior a la v4 no la manda. |
 | `rutas_misma_tanda` | Desde la v3: las rutas cuya tanda principal era aquella en la que pasó el paquete — quiénes descargaban en ese bloque. **Incluye la propia ruta del paquete** si también descargaba ahí. Es lo que permite escribir *«Ruta 3 y Ruta 4 descargaron juntas»* en vez de *«dos furgonetas»*. Opcional: un bot anterior no la manda y queda `[]`. |
 | `rutas_compatibles` | Desde la v2: las otras rutas **cuya ventana también contiene esa hora**, y **sólo cuando hay dos o más** — o sea, las que ese día no se distinguen entre sí. Vacío si el encaje fue inequívoco (la ruta va en `ruta_observada` y **no** se repite aquí; en la v1 sí venía duplicada, y sumar las dos listas la contaba dos veces) o si no encajó ninguna. |
 | `confianza` | `alta` \| `baja`. |
@@ -392,6 +407,7 @@ run_packages:   id, incident_run_id, shipment_id, barcode,
                 merchant_id + merchant_name, assigned_route_id + assigned_route_name,
                 assigned_courier_name, observed_route_id + observed_route_name,
                 type, belt_time, deviation_minutes, volume_m3,
+                net_revenue,
                 compatible_routes (jsonb), confidence, confidence_reasons (jsonb),
                 withdrawn_at, handled_at, handled_by, handled_by_name,
                 handling_note, timestamps          único: (incident_run_id, shipment_id)
@@ -429,6 +445,13 @@ la que dice su ruta. El `mensajero` que pide el contrato sale derivado
 (§3): dos mensajeros en la misma ruta lo dejarían ambiguo. Es nullable —un mensajero recién
 dado de alta puede no tener ruta— y en Postgres el índice único deja pasar varios NULL, así
 que puede haber varios sin asignar.
+
+**`run_packages.net_revenue` es la ganancia sin IVA del envío** (fase 13), `decimal(10,2)`
+y **nullable**, donde nulo significa «no se encontró el envío en Envexpress», no «cero euros»
+— exactamente el mismo trato que `volume_m3` y por el mismo motivo. Es la única columna que
+la v4 añade: el coste no viaja (§3.1). **Ojo al sumarla:** esta tabla sólo guarda los envíos
+**con** ruta, así que su suma es la ganancia de las rutas, no la del día. La del día no está
+en este panel todavía (§8).
 
 **`couriers.maximum_volume` es lo que cabe en la furgoneta, en m³.** Añadido el
 13/08/2026, y lo usa el calendario de capacidades (§7, fase 6.E). Misma unidad y misma precisión —`decimal(8,3)`— que `volume_m3` de
@@ -636,6 +659,7 @@ docker compose logs -f vite
 | 10 | Mi perfil, y los avisos flotantes | **Hecha** (14/08/2026) |
 | 11 | Configuraciones por módulo, y el calendario leyéndolas | **Hecha** (14/08/2026; el calendario, el 17/08/2026) |
 | 12 | Roles y permisos, con su maestro | **Hecha** (18/08/2026) |
+| 13 | La ganancia por ruta: guardarla y enseñarla | **Hecha** (19/08/2026) salvo la decisión de si merece pantalla propia |
 
 > La tabla se quedó en la fase 5 hasta el **17/08/2026**, con seis fases descritas más abajo y
 > ninguna listada aquí: quien abría el documento por §7 leía que el proyecto iba por la mitad.
@@ -645,7 +669,7 @@ docker compose logs -f vite
 > Lo único que queda abierto de la 6 a la 11 es **6.D**, el backfill del `codigo`, que es mejora
 > y no requisito (§8).
 
-**La suite son 426 tests** (1.254 aserciones, 166 s) el 18/08/2026, sobre Postgres. Es la cifra
+**La suite son 436 tests** (1.284 aserciones, 84 s) el 19/08/2026, sobre Postgres. Es la cifra
 que hay que ver pasar antes de dar cualquier cosa por terminada, no la inspección del código.
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -2019,6 +2043,155 @@ La pantalla **no usa `CrudScreen`**: ese trait está construido sobre `SoftDelet
 reactivación, «ver dados de baja»— y aquí no hay nada de eso. Se reutiliza lo que no depende de
 ello: `SendsToasts` y el cerrojo de doble envío.
 
+### Fase 13 — La ganancia por ruta. Hecha el 19/08/2026
+
+**Qué pide el cliente:** saber **cuánto deja cada ruta**, no sólo si sus paquetes pasaron a la
+hora que tocaba. El dato existe en **Envexpress (Mensaglobal)**, el otro portal de la agencia,
+y el bot ya sabe extraerlo y cruzarlo. Aquí sólo hay que **recibirlo, guardarlo y enseñarlo**:
+este panel no habla con Envexpress.
+
+**Qué es la ganancia, exactamente.** Lo que se facturó por el envío **sin IVA** — la suma de la
+columna `Precio` de sus valoraciones en Envexpress. **No es el margen**, que es
+`ganancia − coste`. El cliente lo fijó así el 19/08/2026 señalando la pantalla del portal: en
+un envío de 3,06 € de precio y 2,46 € de coste, donde el portal rotula «Beneficio: 0,60 €», la
+ganancia son **3,06 €**.
+
+**Alcance, recortado por el cliente el 19/08/2026:** sólo `ganancia`. Ni coste, ni margen, ni
+totales de jornada. Lo que sigue es exactamente eso y nada más.
+
+**El lado del bot está terminado (19/08/2026).** Baja la ganancia de Envexpress, la cruza por
+código de barras, la publica en sus dos informes y **la manda en el payload v4**. Este lado
+—13.A, 13.B y 13.C— se hizo del tirón el mismo día y **se probó contra ese payload real**: los
+números del criterio de aceptación de 13.D salieron todos, ver el final de la fase.
+
+**Hay un payload v4 real para desarrollar contra él**, sin esperar a una corrida: en el repo del
+bot, `salidas/panel_20260807.json` (jornada del 07/08/2026, 139 KB). Sus números, que es lo que
+debería salir al otro lado:
+
+| | |
+|---|---|
+| `version` | 4 |
+| `paquetes[]` | 271 |
+| con `ganancia` | 250 · **2.615,16 €** |
+| con `null` | 21 |
+
+⚠️ Esos 2.615,16 € **no son la ganancia del día**, que fue de 4.871,10 €: los otros 2.255,94 €
+son de envíos sin ruta, que no viajan en `paquetes[]`. Es exactamente la trampa que 13.C
+manda evitar al rotular.
+
+**Cómo lo presenta el bot, por si conviene que la pantalla se parezca:** en su listado, cada
+ruta lleva su importe en el encabezado —*«59 paquetes, 1 con incidencia, 7 sin ganancia —
+ganancia 1.011,86 €»*— y al pie hay una tabla `Ruta | Paquetes | Con dato | Ganancia` con una
+fila `(sin ruta)` y un `TOTAL`. Las dos ideas que ese formato ya resuelve son las de 13.C: **el
+número de envíos con dato siempre al lado del importe**, y **los envíos sin ruta contados
+aparte**.
+
+**El precedente era `volume_m3`, y se calcó.** Entró igual, por los mismos motivos y con las
+mismas trampas: opcional, nullable, nulo≠cero, y toda suma acompañada de su cuenta. La
+ganancia va **pegada a él en los cuatro sitios**, así que quien toque uno encontrará al otro
+al lado y no hará falta redescubrir el porqué:
+
+| Dónde | Qué comparten |
+|---|---|
+| Sus dos migraciones (`…_add_volume_to_run_packages_table`, `…_add_net_revenue_to_run_packages_table`) | Cómo se documenta el nulo y por qué ese tipo. |
+| `IncidentIntakeController` | Las reglas de validación, contiguas, y las dos filas del *upsert*. |
+| `RunPackage` | `$fillable` y el *cast* a `float`, con el nulo advertido en el comentario. |
+| `⚡capacity-calendar.blade.php` y `⚡incident-run.blade.php` | `sum(...)` con `count(...)` al lado: `count` de la columna no cuenta los nulos y es el denominador honesto. |
+
+**13.A — Migración. Hecha.** `run_packages` ganó **una** columna: `net_revenue`
+(`decimal(10,2)`, nullable, `after('volume_m3')`) en
+`2026_08_19_100000_add_net_revenue_to_run_packages_table.php`. Nullable por dos motivos
+distintos que conviene no confundir: una corrida de un bot v3 no trae el campo, y un envío
+puede no aparecer en Envexpress (~30 de 543 al día). **Sin backfill**: el cliente vacía las
+tablas antes de la primera corrida v4. `decimal(10,2)` porque son euros con dos decimales y
+una jornada entera ronda los 5.000 €.
+
+**13.B — Intake. Hecho.** `IncidentIntakeController` acepta la v4 con las tres líneas
+previstas y ni una más: `'paquetes.*.ganancia'` y `'incidencias.*.ganancia'` como
+`nullable|numeric|min:0` junto a las de `volumen_m3`, y `'net_revenue' => $row['ganancia'] ?? null`
+en la fila del *upsert*. No hizo falta tocar nada más: `version` sólo se valida como entero y
+el *upsert* por `(fecha, expedicion)` ya escribía una lista explícita de columnas (regla 2 de
+§3.1). `IncidentIntakeV4Test` —6 casos— fija que la v4 entra y guarda el importe, que **los dos
+decimales sobreviven** (el cliente contrasta 3,06 € contra la pantalla de Envexpress), que una
+**v3 sigue entrando** con `net_revenue` a nulo, que un `null` **no** acaba en `0`, que un
+importe negativo se rechaza con un 422 que nombra la fila, y que el campo se guarda también
+desde `paquetes[]` —que es de donde sale casi toda la ganancia de una ruta, porque la mayoría
+de los envíos no son incidencia—.
+
+**13.C — La pantalla. Hecha**, en el detalle de la jornada. Las dos reglas que la fase fijó
+como no opcionales, y que **siguen sin serlo para cualquier pantalla que sume esta columna**:
+
+1. **Decir siempre sobre cuántos envíos se sumó.** Un nulo es «no se sabe», no «cero», igual
+   que con el volumen. Sin el denominador, una ruta a la que le faltan valoraciones parece
+   menos rentable de lo que es.
+2. **No llamar «total del día» a la suma de las rutas.** Aquí sólo están los envíos con ruta.
+
+Dónde quedó cada una:
+
+- **En el encabezado de cada ruta**, junto a «59 paquetes, 1 con incidencia»:
+  *«· 1.011,86 € (52 de 59 envíos)»*. Si ninguna de sus filas trae dato, no se pinta un
+  `0,00 €` sino **«sin dato de ganancia»** (regla 1).
+- **Bajo el título «Por ruta»**, la suma de la jornada rotulada **«Ganancia de las rutas»**,
+  con su cobertura y con la advertencia de que **no incluye los envíos sin ruta** (regla 2).
+  Nunca «del día»: el 07/08/2026 esta cifra son 2.615,16 € de los 4.871,10 € facturados.
+
+Dos detalles de implementación que no son cosméticos. El importe de la jornada sale del
+agregado de `balance()` —tres `selectRaw` más en la consulta que ya se hacía— y **no** de la
+colección de paquetes: esa cifra se pinta **fuera** de la isla del listado, y leerla de la
+colección habría vuelto a cargar las ~650 filas del día en cada clic, que es exactamente lo
+que esta pantalla dejó de hacer. Y el par suma/cuenta viaja siempre junto, con la forma que ya
+usaba el calendario de capacidades: `sum(net_revenue)` con `count(net_revenue)` al lado, que
+no cuenta los nulos y es el denominador honesto. Cuatro tests en `IncidentRunScreenTest` fijan
+las dos reglas, el «sin dato» y que una jornada anterior a la v4 no pinta ni un euro.
+
+**13.D — Permisos.** Ninguno nuevo, como estaba previsto: es más información dentro de la
+pantalla de incidencias, que ya tiene su `incidents.view` (fase 12).
+
+**Cómo se probó, y qué salió.** Se mandó el payload v4 real del bot —`salidas/panel_20260807.json`,
+la jornada del 07/08/2026— tal cual al endpoint:
+
+```bash
+curl -X POST http://localhost:8000/api/incidencias \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  --data-binary @../bot-gls/salidas/panel_20260807.json
+```
+
+El criterio de aceptación, comprobado contra la base el 19/08/2026:
+
+| | Esperado | Salió |
+|---|---|---|
+| respuesta | `200` con el balance | `200`, `recibidas: 271`, `incidencias: 50`, `nuevas: 271` |
+| `incident_runs.payload_version` | `4` | `4` |
+| `run_packages` con `net_revenue` | 250 de 271 | **250 de 271** |
+| suma de `net_revenue` | 2.615,16 € | **2.615,16 €** |
+| filas con `net_revenue` a `0` | ninguna | **ninguna**; las 21 que faltan, a `NULL` |
+
+Y el reparto por ruta que pinta la pantalla coincide envío a envío con el que publica el bot
+en su propio listado, que era la comprobación que de verdad importaba:
+
+| Ruta | Ganancia | Con dato |
+|---|---|---|
+| Ruta 1 | 1.011,86 € | 52 de 59 |
+| Ruta 2 | 137,90 € | 11 de 14 |
+| Ruta 3 | 605,95 € | 64 de 69 |
+| Ruta 4 | 115,10 € | 22 de 25 |
+| Ruta 5 | 589,48 € | 68 de 71 |
+| Ruta 6 | 154,87 € | 33 de 33 |
+| **Las rutas** | **2.615,16 €** | **250 de 271** |
+
+⚠️ **Esos 2.615,16 € no son la ganancia del día**, que fueron 4.871,10 €. La diferencia son
+envíos sin ruta, que no viajan en `paquetes[]`. Si una pantalla acaba rotulando esa suma como
+«ganancia del día», está diciendo la mitad.
+
+**Una corrección a lo que decía esta fase antes de hacerse:** hablaba de poner la ganancia
+«junto a los paquetes y el volumen que ya se pintan» en el detalle de la jornada. **El volumen
+no se pinta ahí**: vive en el calendario de capacidades (fase 6.E) y esta pantalla nunca lo ha
+enseñado. La ganancia va junto al recuento de paquetes, y sola.
+
+**Decisión abierta:** si la rentabilidad merece pantalla propia —por ruta y por comercio, con
+rango de fechas— o se queda como una columna más de la jornada. Se empieza por lo segundo, que
+es lo que se pidió, y se decide con el cliente cuando lo vea funcionando.
+
 ## 8. Pendientes y decisiones abiertas
 
 - [x] **Cerrar con el repo del bot el cambio de `ruta` a texto** (§3). Acordado el 13/08/2026,
@@ -2039,6 +2212,25 @@ ello: `SendsToasts` y el cerrojo de doble envío.
       aquí —si el color del tramo sustituía al rojo del «se pasa de la capacidad»— se cerró en
       que **conviven**: el exceso pasó a ser una marca ▲ y el color queda para el tramo. El
       porqué, en §7, fase 11.
+- [x] **La ganancia (fase 13).** Acordada y hecha el 19/08/2026, en los dos lados: el bot la
+      baja de Envexpress y la cruza por código de barras —513 de 543 envíos del 07/08 real,
+      4.871,10 €— y la manda en el payload v4; aquí se guarda en `run_packages.net_revenue` y
+      se enseña por ruta en el detalle de la jornada. Probado contra ese payload real, ver §7
+      fase 13. **Lo único que queda abierto es si la rentabilidad acaba teniendo pantalla
+      propia** —por ruta y por comercio, con rango de fechas—: se empezó por la columna en la
+      jornada, que es lo que se pidió, y se decide con el cliente cuando lo vea funcionando.
+- [ ] **La ganancia del día entero, aplazada el 19/08/2026.** El bot manda un importe por
+      paquete, y `paquetes[]` sólo lleva los envíos **con** ruta: el 07/08/2026 eran 2.615,16 €
+      de los 4.871,10 € que se facturaron ese día. Los otros 2.255,94 € son de remitentes que
+      no están en el maestro y **este panel no los ve ni los verá** hasta que el contrato lleve
+      totales de jornada. Mientras tanto, ninguna pantalla puede rotular la suma de las rutas
+      como «ganancia del día»: sería la mitad. **La pantalla de la fase 13 ya lo respeta** —dice
+      «Ganancia de las rutas» y avisa de que deja fuera los envíos sin ruta—, y hay un test que
+      lo fija, así que esto es un pendiente del contrato y no de la interfaz. El bot sí lo tiene resuelto en su listado en
+      texto, con una fila `(sin ruta)` aparte.
+- [ ] **El `coste`, y con él el margen.** Fuera de la v4 por decisión del cliente. El bot lo
+      recibe de Envexpress en la misma respuesta que la ganancia, así que reincorporarlo es una
+      columna aquí y una línea allí, sin peticiones nuevas.
 - [ ] **¿Pest?** §7 pedía el test de contrato en Pest y está en PHPUnit, porque Pest no está
       instalado y añadirlo choca con la regla 2 de `CLAUDE.md`. Decisión pendiente.
 - [ ] **Backfill de `codigo`** para los comercios que lo tengan. Se puede extraer del portal

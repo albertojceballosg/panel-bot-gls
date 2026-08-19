@@ -454,7 +454,16 @@ new #[Layout('components.layouts.app')] class extends Component
      * recorrido. La alternativa era contar sobre la colección entera, que es
      * justo lo que esta pantalla dejó de cargar en cada clic.
      *
-     * @return array{incidencias: int, firmes: int, pendientes: int}
+     * Desde el 19/08/2026 arrastra también la ganancia de la jornada, y por el mismo motivo
+     * de siempre: se pinta **fuera** de la isla del listado, así que no puede salir de
+     * `$this->paquetes` sin cargar las ~650 filas del día en cada clic — que es justo lo que
+     * esta pantalla dejó de hacer. Aquí no cuesta ni una consulta más.
+     *
+     * `sum(net_revenue)` junto a `count(net_revenue)`, como en el calendario de capacidades:
+     * `count` de una columna no cuenta los nulos, y es el denominador honesto de la suma.
+     * Postgres devuelve `null` —no cero— si no hay ni un valor, que es lo que hace falta.
+     *
+     * @return array{incidencias: int, firmes: int, pendientes: int, ganancia: ?float, con_ganancia: int, envios: int}
      */
     private function balance(): array
     {
@@ -462,12 +471,20 @@ new #[Layout('components.layouts.app')] class extends Component
             ->selectRaw('count(*) filter (where type is not null) as incidencias')
             ->selectRaw('count(*) filter (where type is not null and confidence = ?) as firmes', [RunPackage::CONFIDENCE_HIGH])
             ->selectRaw('count(*) filter (where type is not null and handled_at is null) as pendientes')
+            ->selectRaw('sum(net_revenue) as ganancia')
+            ->selectRaw('count(net_revenue) as con_ganancia')
+            ->selectRaw('count(*) as envios')
             ->first();
 
         return [
             'incidencias' => (int) $fila->incidencias,
             'firmes' => (int) $fila->firmes,
             'pendientes' => (int) $fila->pendientes,
+
+            // Nula si ni un envío de la jornada trae valoración: «no se sabe», no cero.
+            'ganancia' => $fila->ganancia === null ? null : (float) $fila->ganancia,
+            'con_ganancia' => (int) $fila->con_ganancia,
+            'envios' => (int) $fila->envios,
         ];
     }
 
@@ -555,6 +572,11 @@ new #[Layout('components.layouts.app')] class extends Component
                     // justo esta ruta: llega abierta y marcada.
                     'destacada' => $this->highlighted($grupo->first()->assigned_courier_name),
                     'paquetes' => $grupo->count(),
+
+                    // La ganancia de la ruta y **sobre cuántos envíos** se sumó.
+                    // Las dos juntas o ninguna: ver `ganancia()`.
+                    ...$this->ganancia($grupo),
+
                     'total' => $incidencias->count(),
                     'firmes' => $incidencias->where('confidence', RunPackage::CONFIDENCE_HIGH)->count(),
                     'pendientes' => $incidencias->reject->isHandled()->count(),
@@ -564,6 +586,30 @@ new #[Layout('components.layouts.app')] class extends Component
                 ];
             })
             ->sortBy('nombre');
+    }
+
+    /**
+     * Lo facturado sin IVA por un grupo de paquetes, con su cobertura al lado.
+     *
+     * **`importe` es nulo, no cero, cuando ningún envío del grupo trae el dato**, igual que
+     * con el volumen: un cero diría «esta ruta no dejó nada» cuando lo cierto es que no se
+     * sabe. Y `con` viaja siempre pegado al importe porque sin el denominador una ruta a la
+     * que le faltan valoraciones parece menos rentable de lo que fue (§7, fase 13.C, regla 1).
+     *
+     * Se suma en PHP y no en SQL porque la colección de la jornada ya está cargada —es la
+     * misma que pinta las tablas—, y una consulta más por ruta no compraría nada.
+     *
+     * @param  Collection<int, RunPackage>  $grupo
+     * @return array{ganancia: ?float, con_ganancia: int}
+     */
+    private function ganancia(Collection $grupo): array
+    {
+        $con = $grupo->whereNotNull('net_revenue');
+
+        return [
+            'ganancia' => $con->isEmpty() ? null : round($con->sum('net_revenue'), 2),
+            'con_ganancia' => $con->count(),
+        ];
     }
 
     /** Lo que el bot sostiene, arriba; lo dudoso, después. */
@@ -748,7 +794,22 @@ new #[Layout('components.layouts.app')] class extends Component
          por qué costar una ida al servidor. --}}
     <section class="mb-6">
         <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h2 class="text-sm font-semibold text-shell-900">Por ruta</h2>
+            <div>
+                <h2 class="text-sm font-semibold text-shell-900">Por ruta</h2>
+
+                {{-- «De las rutas», nunca «del día»: aquí sólo están los envíos que tienen
+                     ruta en el maestro. El 07/08/2026 eran 2.615,16 € de los 4.871,10 €
+                     facturados; llamar «del día» a esta suma diría la mitad. El total de
+                     jornada no viaja en el contrato todavía (§8). --}}
+                @if ($balance['ganancia'] !== null)
+                    <p class="text-xs text-slate-500">
+                        Ganancia de las rutas:
+                        <strong class="font-semibold text-shell-900 tabular-nums">{{ number_format($balance['ganancia'], 2, ',', '.') }} €</strong>
+                        sobre {{ $balance['con_ganancia'] }} de {{ $balance['envios'] }} envíos
+                        · <span title="Los envíos de comercios que no están en el maestro no llegan en el payload, así que tampoco están en esta suma.">no incluye los envíos sin ruta</span>
+                    </p>
+                @endif
+            </div>
 
             {{-- De dónde se viene, cuando se entra desde una celda del
                  calendario de capacidades. Con el aviso puesto, una jornada en
@@ -818,6 +879,23 @@ new #[Layout('components.layouts.app')] class extends Component
                                         {{-- La proporción es el dato: 11 sobre 94 no
                                              es lo mismo que 11 sobre 12. --}}
                                         · {{ $ruta['paquetes'] }} paquetes, {{ $ruta['total'] }} con incidencia
+                                    @endif
+
+                                    {{-- Lo que dejó la ruta, **siempre con el número de
+                                         envíos sobre los que se sumó**: un envío sin
+                                         valoración en Envexpress es «no se sabe», no cero,
+                                         y sin el denominador la ruta parecería menos
+                                         rentable de lo que fue. --}}
+                                    @if ($ruta['ganancia'] !== null)
+                                        <span class="whitespace-nowrap"
+                                              title="Facturado sin IVA. {{ $ruta['paquetes'] - $ruta['con_ganancia'] }} de los {{ $ruta['paquetes'] }} envíos no tienen valoración en Envexpress y no suman.">
+                                            · <span class="font-semibold text-shell-900 tabular-nums">{{ number_format($ruta['ganancia'], 2, ',', '.') }} €</span>
+                                            ({{ $ruta['con_ganancia'] }} de {{ $ruta['paquetes'] }} envíos)
+                                        </span>
+                                    @else
+                                        <span class="whitespace-nowrap" title="Ninguno de sus envíos tiene valoración en Envexpress: es «no se sabe», no cero.">
+                                            · sin dato de ganancia
+                                        </span>
                                     @endif
                                 </p>
                             </div>
