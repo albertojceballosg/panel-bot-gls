@@ -669,7 +669,7 @@ docker compose logs -f vite
 > Lo único que queda abierto de la 6 a la 11 es **6.D**, el backfill del `codigo`, que es mejora
 > y no requisito (§8).
 
-**La suite son 439 tests** (1.290 aserciones) el 19/08/2026, sobre Postgres. Es la cifra
+**La suite son 441 tests** (1.295 aserciones) el 19/08/2026, sobre Postgres. Es la cifra
 que hay que ver pasar antes de dar cualquier cosa por terminada, no la inspección del código.
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -2134,14 +2134,19 @@ Dónde quedó cada una:
 - **Bajo el título «Por ruta»**, la suma de la jornada rotulada **«Ganancia de las rutas»**,
   con su cobertura y con la advertencia de que **no incluye los envíos sin ruta** (regla 2).
   Nunca «del día»: el 07/08/2026 esta cifra son 2.615,16 € de los 4.871,10 € facturados.
-- **En cada fila de incidencia**, su propio importe, y delante **el código de barras**
+- **En cada fila de paquete**, su propio importe, y delante **el código de barras**
   (19/08/2026, a petición del cliente). Las dos columnas van juntas por la misma razón: se
-  pide una incidencia y lo siguiente que se hace es buscar ese paquete en el portal para ver
-  qué se facturó. El código abría el diálogo de una en una, que es impracticable para
-  contrastar una jornada entera contra el listado en texto del bot; ahora la tabla se lee en
-  el mismo orden que ese listado —`Código · Comercio · Hora cinta · Apunta a · Ganancia`—.
-  Un envío sin valoración es **«—», no «0,00 €»**: en una fila suelta el cero se lee como un
-  envío que no se cobró, que es peor mentira que en un total.
+  mira un paquete y lo siguiente que se hace es buscarlo en el portal para ver qué se facturó.
+  El código abría el diálogo de una en una, que es impracticable para contrastar una jornada
+  entera contra el listado en texto del bot; ahora la tabla se lee en el mismo orden que ese
+  listado —`Código · Comercio · Hora cinta · Apunta a · Ganancia`—. Un envío sin valoración es
+  **«—», no «0,00 €»**: en una fila suelta el cero se lee como un envío que no se cobró, que
+  es peor mentira que en un total.
+- **También en «Pasaron con su ruta»**, la tabla plegada de los que fueron donde debían. No es
+  simetría por gusto: ahí está la mayoría de la jornada y con ella **casi toda la ganancia de
+  la ruta**, así que sin esas dos columnas el importe del encabezado no se puede cuadrar
+  mirando la pantalla, sólo creérselo. El 07/08/2026, de los 271 envíos con ruta sólo 50 eran
+  incidencia.
 
 Dos detalles de implementación que no son cosméticos. El importe de la jornada sale del
 agregado de `balance()` —tres `selectRaw` más en la consulta que ya se hacía— y **no** de la
@@ -2149,9 +2154,9 @@ colección de paquetes: esa cifra se pinta **fuera** de la isla del listado, y l
 colección habría vuelto a cargar las ~650 filas del día en cada clic, que es exactamente lo
 que esta pantalla dejó de hacer. Y el par suma/cuenta viaja siempre junto, con la forma que ya
 usaba el calendario de capacidades: `sum(net_revenue)` con `count(net_revenue)` al lado, que
-no cuenta los nulos y es el denominador honesto. Siete tests en `IncidentRunScreenTest` fijan
-las dos reglas, el «sin dato», el «—» de una fila sin valoración, el código en la fila y que
-una jornada anterior a la v4 no pinta ni un euro.
+no cuenta los nulos y es el denominador honesto. Nueve tests en `IncidentRunScreenTest` fijan
+las dos reglas, el «sin dato», el «—» de una fila sin valoración —en las dos tablas—, el
+código en la fila y que una jornada anterior a la v4 no pinta ni un euro.
 
 **13.D — Permisos.** Ninguno nuevo, como estaba previsto: es más información dentro de la
 pantalla de incidencias, que ya tiene su `incidents.view` (fase 12).

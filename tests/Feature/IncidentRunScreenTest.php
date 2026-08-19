@@ -1206,4 +1206,29 @@ class IncidentRunScreenTest extends TestCase
 
         $this->get($this->url())->assertOk()->assertDontSee('0,00 €');
     }
+
+    /**
+     * Las que pasaron con su ruta llevan las mismas dos columnas. Son la mayoría de la
+     * jornada y de donde sale casi toda la ganancia de una ruta: sin ellas, el importe del
+     * encabezado no se puede cuadrar mirando la pantalla, sólo creérselo.
+     */
+    public function test_packages_that_went_with_their_route_also_carry_barcode_and_revenue(): void
+    {
+        $corrida = $this->storedRun();
+        $correcto = $this->package($corrida, '1337079320', revenue: 4.15);
+
+        $respuesta = $this->get($this->url())->assertOk();
+
+        $respuesta->assertSee($correcto->barcode);
+        $respuesta->assertSee('4,15 €');
+    }
+
+    /** Y el mismo «—» que en una incidencia: no se sabe, no es cero. */
+    public function test_a_correct_package_without_revenue_shows_a_dash_not_a_zero(): void
+    {
+        $corrida = $this->storedRun();
+        $this->package($corrida, '1', revenue: null);
+
+        $this->get($this->url())->assertOk()->assertDontSee('0,00 €');
+    }
 }

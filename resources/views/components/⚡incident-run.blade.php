@@ -1003,7 +1003,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                                              ruta más compatible, no un hecho comprobado. --}}
                                                         <th class="pb-2 font-medium">Apunta a</th>
                                                     @endif
-                                                    <th class="pb-2 text-right font-medium">Ganancia</th>
+                                                    <th class="pb-2 pr-3 text-right font-medium">Ganancia</th>
                                                     <th class="pb-2 font-medium">Fiabilidad</th>
                                                     <th class="pb-2 font-medium">Gestión</th>
                                                     <th class="pb-2"><span class="sr-only">Acciones</span></th>
@@ -1169,23 +1169,38 @@ new #[Layout('components.layouts.app')] class extends Component
                                     </button>
 
                                     <div x-show="verCorrectos" x-cloak class="mt-2 overflow-x-auto">
-                                        <table class="w-full min-w-[28rem] text-sm">
+                                        <table class="w-full min-w-[40rem] text-sm">
                                             <thead>
                                                 <tr class="text-left text-xs text-slate-500">
+                                                    <th class="pb-2 font-medium">Código</th>
                                                     <th class="pb-2 font-medium">Comercio</th>
                                                     <th class="pb-2 font-medium">Hora cinta</th>
+                                                    <th class="pb-2 pr-3 text-right font-medium">Ganancia</th>
                                                     <th class="pb-2"><span class="sr-only">Detalle</span></th>
                                                 </tr>
                                             </thead>
                                             <tbody class="divide-y divide-slate-100">
                                                 @foreach ($ruta['correctos'] as $fila)
                                                     <tr>
+                                                        <td class="py-2 pr-3 font-mono text-xs tabular-nums select-all">
+                                                            {{ $fila->barcode ?? '—' }}
+                                                        </td>
+
                                                         <td class="py-2 pr-3">{{ $fila->merchant_name }}</td>
                                                         <td class="py-2 pr-3 tabular-nums">
                                                             {{-- Un paquete con ruta pero sin escanear: 34 el
                                                                  03/08. No es una incidencia, pero tampoco se
                                                                  pudo comprobar. --}}
                                                             {{ $fila->belt_time ? $this->hora($fila->belt_time) : 'sin paso por la cinta' }}
+                                                        </td>
+
+                                                        {{-- Aquí está casi toda la ganancia de la ruta: son los
+                                                             envíos que fueron donde debían, o sea la mayoría. Sin
+                                                             esta columna el importe del encabezado no se puede
+                                                             cuadrar mirando la pantalla. --}}
+                                                        <td class="py-2 pr-3 text-right tabular-nums"
+                                                            @if ($fila->net_revenue === null) title="Este envío no aparece en Envexpress: no se sabe lo que se facturó por él." @endif>
+                                                            {{ $this->euros($fila->net_revenue) }}
                                                         </td>
                                                         <td class="py-2 text-right">
                                                             <x-ui.icon-button label="Ver el detalle del paquete"
