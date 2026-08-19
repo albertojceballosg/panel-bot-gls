@@ -290,7 +290,7 @@ new #[Layout('components.layouts.app')] class extends Component
         $facturado = $partes->filter(fn ($p) => $p->ganancia !== null);
         $ganancia = $facturado->isEmpty() ? null : (float) $facturado->sum(fn ($p) => (float) $p->ganancia);
 
-        $parte = function (string $clave, string $label, string $help) use ($partes, $total, $capacidad) {
+        $parte = function (string $clave, string $label, string $help) use ($partes, $total, $capacidad, $ganancia) {
             $fila = $partes[$clave] ?? null;
             $volumen = $fila === null || $fila->volumen === null ? null : (float) $fila->volumen;
 
@@ -302,6 +302,14 @@ new #[Layout('components.layouts.app')] class extends Component
                 // pregunta de negocio entera: cuánto se fue con otra furgoneta.
                 'revenue' => $fila === null || $fila->ganancia === null ? null : (float) $fila->ganancia,
                 'priced' => $fila === null ? 0 : (int) $fila->con_ganancia,
+
+                // Y **el reparto del dinero es el suyo, no el del volumen**: los dos
+                // porcentajes se parecen pero no tienen por qué coincidir, porque un envío
+                // voluminoso puede facturar poco y al revés. Se calcula sobre los envíos
+                // con valoración, que no son los mismos que traen volumen.
+                'revenue_share' => $fila === null || $fila->ganancia === null || $ganancia === null || $ganancia <= 0
+                    ? null
+                    : (float) $fila->ganancia / $ganancia,
 
                 // Qué parte del volumen del día es. Es el reparto que se viene a
                 // ver, y por eso manda en el diálogo: los dos suman 100 %.
@@ -799,25 +807,46 @@ new #[Layout('components.layouts.app')] class extends Component
                             <span class="block text-xs text-slate-500">{{ $parte['help'] }}</span>
                         </dt>
 
-                        <dd class="text-right whitespace-nowrap tabular-nums">
-                            <span class="block text-lg font-semibold text-shell-900">
-                                {{ $parte['share'] === null ? '—' : $ocupacion($parte['share']) }}
-                            </span>
-                            <span class="block text-xs text-slate-400">
-                                {{ $vol($parte['volume']) }} m³ ·
-                                {{ $parte['shipments'] }} {{ $parte['shipments'] === 1 ? 'envío' : 'envíos' }}
+                        {{-- Dos repartos, no uno con una coletilla: el del volumen y el del
+                             dinero. Se parecen casi siempre, y por eso hay que poder verlos
+                             separados —un envío voluminoso puede facturar poco y al revés—.
+                             Cada uno con su cuenta, que tampoco es la misma: los envíos con
+                             volumen y los que tienen valoración de Envexpress no coinciden. --}}
+                        <dd class="grid grid-cols-2 gap-x-4 text-right whitespace-nowrap tabular-nums">
+                            <div>
+                                <span class="block text-lg font-semibold text-shell-900">
+                                    {{ $parte['share'] === null ? '—' : $ocupacion($parte['share']) }}
+                                </span>
+                                <span class="block text-[11px] font-medium tracking-wide text-slate-400 uppercase">
+                                    del volumen
+                                </span>
+                                <span class="mt-0.5 block text-xs text-slate-400">
+                                    {{ $vol($parte['volume']) }} m³ ·
+                                    {{ $parte['shipments'] }} {{ $parte['shipments'] === 1 ? 'envío' : 'envíos' }}
+                                </span>
                                 @if ($parte['usage'] !== null)
-                                    · {{ $ocupacion($parte['usage']) }} de la furgoneta
+                                    <span class="block text-xs text-slate-400">
+                                        {{ $ocupacion($parte['usage']) }} de la furgoneta
+                                    </span>
                                 @endif
-                            </span>
+                            </div>
 
-                            {{-- En su propia línea y con su propia cuenta: en «Fuera de su
-                                 ruta» esto es cuánto dinero acabó en otra furgoneta, que es
-                                 la pregunta que trae a nadie a este diálogo. --}}
-                            <span class="block text-xs text-slate-400">
-                                {{ $euros($parte['revenue']) }} ·
-                                {{ $parte['priced'] }} con ganancia
-                            </span>
+                            {{-- En «Fuera de su ruta» esta columna es la pregunta de negocio
+                                 entera: cuánto dinero acabó en otra furgoneta. --}}
+                            <div>
+                                <span class="block text-lg font-semibold text-shell-900">
+                                    {{ $parte['revenue_share'] === null ? '—' : $ocupacion($parte['revenue_share']) }}
+                                </span>
+                                <span class="block text-[11px] font-medium tracking-wide text-slate-400 uppercase">
+                                    de la ganancia
+                                </span>
+                                <span class="mt-0.5 block text-xs text-slate-400">
+                                    {{ $euros($parte['revenue']) }}
+                                </span>
+                                <span class="block text-xs text-slate-400">
+                                    {{ $parte['priced'] }} con dato
+                                </span>
+                            </div>
                         </dd>
                     </div>
                 @endforeach

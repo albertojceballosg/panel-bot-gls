@@ -669,7 +669,7 @@ docker compose logs -f vite
 > Lo único que queda abierto de la 6 a la 11 es **6.D**, el backfill del `codigo`, que es mejora
 > y no requisito (§8).
 
-**La suite son 445 tests** (1.308 aserciones) el 19/08/2026, sobre Postgres. Es la cifra
+**La suite son 447 tests** (1.316 aserciones) el 19/08/2026, sobre Postgres. Es la cifra
 que hay que ver pasar antes de dar cualquier cosa por terminada, no la inspección del código.
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -2143,12 +2143,21 @@ Dónde quedó cada una:
   **«—», no «0,00 €»**: en una fila suelta el cero se lee como un envío que no se cobró, que
   es peor mentira que en un total.
 - **En el desglose de una celda del calendario de capacidades** (19/08/2026, a petición del
-  cliente): «Ganancia de sus rutas» bajo la ocupación, y **partida igual que el volumen**
-  entre «De su ruta» y «Fuera de su ruta». Ahí la partición es lo que vale: dice **cuánto
-  dinero acabó en otra furgoneta**, que es la misma pregunta del diálogo en euros en vez de
-  en m³. El 07/08/2026, Benjamin GLS: 1.011,86 € sobre 52 de 59 envíos, de los que 19,32 €
-  se fueron fuera de su ruta. Se rotula **«de sus rutas»**, que aquí es todavía más
-  importante: sólo están los envíos de esa UT.
+  cliente): «Ganancia de sus rutas» bajo la ocupación, y **su propio reparto** entre «De su
+  ruta» y «Fuera de su ruta», en dos columnas junto al del volumen —*«98 % del volumen · 97 %
+  de la ganancia»*—. Ahí la partición es lo que vale: dice **cuánto dinero acabó en otra
+  furgoneta**, que es la misma pregunta del diálogo en euros en vez de en m³. El 07/08/2026,
+  Benjamin GLS: 1.011,86 € sobre 52 de 59 envíos, de los que 19,32 € se fueron fuera de su
+  ruta. Se rotula **«de sus rutas»**, que aquí es todavía más importante: sólo están los
+  envíos de esa UT.
+
+  **Los dos repartos son independientes y se pintan por separado a propósito.** Se parecen
+  casi siempre —ese mismo día, Benjamin GLS reparte 97/3 el volumen y 98/2 la ganancia, y
+  BORJA GONZALEZ 98/2 y 97/3—, y justo por eso mezclarlos sería fácil y falso: un envío
+  voluminoso puede facturar poco y uno pequeño mucho, y el día que un solo bulto caro se
+  vaya con otra furgoneta las dos cifras se separarán de verdad. Cada uno lleva además **su
+  propia cuenta**, que tampoco coincide: los envíos con volumen y los que tienen valoración
+  en Envexpress no son los mismos.
 - **También en «Pasaron con su ruta»**, la tabla plegada de los que fueron donde debían. No es
   simetría por gusto: ahí está la mayoría de la jornada y con ella **casi toda la ganancia de
   la ruta**, así que sin esas dos columnas el importe del encabezado no se puede cuadrar
@@ -2163,9 +2172,10 @@ que esta pantalla dejó de hacer. Y el par suma/cuenta viaja siempre junto, con 
 usaba el calendario de capacidades: `sum(net_revenue)` con `count(net_revenue)` al lado, que
 no cuenta los nulos y es el denominador honesto. Nueve tests en `IncidentRunScreenTest` fijan
 las dos reglas, el «sin dato», el «—» de una fila sin valoración —en las dos tablas—, el
-código en la fila y que una jornada anterior a la v4 no pinta ni un euro; otros cuatro en
+código en la fila y que una jornada anterior a la v4 no pinta ni un euro; otros seis en
 `CapacityCalendarTest` fijan el reparto del diálogo, que el importe se cuenta **sobre sus
-propios envíos** —no sobre los que traen volumen, que son otros— y el rótulo.
+propios envíos** —no sobre los que traen volumen, que son otros—, que **el reparto del dinero
+no es el del volumen** (un caso a 90/10 en m³ y 25/75 en euros) y el rótulo.
 
 **Ganancia, no «rentabilidad».** El cliente la pide con ese nombre y en la conversación vale,
 pero **ninguna pantalla la rotula así**: la rentabilidad es el margen y el margen necesita el

@@ -835,4 +835,53 @@ class CapacityCalendarTest extends TestCase
         $componente->assertSee('8,60 €');
         $componente->assertDontSee('Ganancia del día');
     }
+
+    /**
+     * **El reparto del dinero es el suyo, no el del volumen.** Se parecen casi siempre, y
+     * justo por eso hay que poder verlos separados: un envío voluminoso puede facturar poco
+     * y uno pequeño mucho. Aquí el volumen va 90/10 y la ganancia 25/75.
+     */
+    public function test_the_revenue_split_is_its_own_and_not_the_volume_one(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $lunes = $this->runOn($this->lunes);
+        // Un bulto grande y barato con su ruta…
+        $this->package($lunes, 'Freddy GLS', 9.0, ['net_revenue' => 5.00]);
+        // …y uno pequeño y caro que se fue con otra.
+        $this->package($lunes, 'Freddy GLS', 1.0, ['type' => RunPackage::TYPE_OTHER_ROUTE, 'net_revenue' => 15.00]);
+
+        [$propio, $ajeno] = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->viewData('detalle')['parts'];
+
+        $this->assertSame(0.9, $propio['share']);
+        $this->assertSame(0.25, $propio['revenue_share']);
+
+        $this->assertSame(0.1, $ajeno['share']);
+        $this->assertSame(0.75, $ajeno['revenue_share']);
+
+        // Y el reparto del dinero cierra en 100 %, como el del volumen.
+        $this->assertSame(1.0, $propio['revenue_share'] + $ajeno['revenue_share']);
+    }
+
+    /** Sin valoraciones no hay reparto de dinero que enseñar: «—», no un 0 %. */
+    public function test_without_any_revenue_there_is_no_revenue_split(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, 'Freddy GLS', 4.0, ['net_revenue' => null]);
+        $this->package($lunes, 'Freddy GLS', 1.0, ['type' => RunPackage::TYPE_OTHER_ROUTE, 'net_revenue' => null]);
+
+        [$propio, $ajeno] = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->viewData('detalle')['parts'];
+
+        $this->assertNull($propio['revenue_share']);
+        $this->assertNull($ajeno['revenue_share']);
+
+        // El del volumen sigue estando: son dos repartos independientes.
+        $this->assertSame(0.8, $propio['share']);
+    }
 }
