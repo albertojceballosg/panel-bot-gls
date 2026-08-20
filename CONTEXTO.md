@@ -492,6 +492,17 @@ hay **una sola fuente de verdad**: es imposible que un comercio esté en una rut
 la que dice su ruta. El `mensajero` que pide el contrato sale derivado
 (`Merchant → PickupRoute → Courier`, un `hasOneThrough`), no de una FK propia.
 
+**Del recuento de comercios de una ruta se va a esos comercios** (20/08/2026): la cifra de la
+columna «Comercios» enlaza a `/merchants?ruta=<id>`, con el filtro puesto. Enlace a la pantalla
+que ya existe y no un diálogo con la lista: allí además se pueden tocar, y es donde acaba
+yendo quien mira el número. Dos guardas, y las dos importan: **sin `merchants.view` no se
+enlaza** —el permiso de ver rutas no puede volverse uno de ver comercios por pulsar una cifra
+(§7, fase 12)— y **con cero comercios tampoco**, que no hay nada al otro lado. Del lado que
+recibe, `?ruta=` llega por la red: se comprueba que sea numérico **antes** de ir a la base —un
+`where id = 'abc'` contra un `bigint` sería un 500 de Postgres, o sea que la consulta que iba a
+validar el valor sería ella misma el fallo— y que la ruta exista; si no, se cae al «todas las
+rutas». Mismo patrón que el `?ut=` del detalle de una jornada.
+
 **`couriers.pickup_route_id` es único** porque el contrato sirve un solo `mensajero` por comercio
 (§3): dos mensajeros en la misma ruta lo dejarían ambiguo. Es nullable —un mensajero recién
 dado de alta puede no tener ruta— y en Postgres el índice único deja pasar varios NULL, así
@@ -510,6 +521,27 @@ en este panel todavía (§8).
 tratar un cero como un hueco. Sin backfill: las filas anteriores se quedan a nulo, que es la
 verdad. **El margen es `net_revenue − real_cost` y lo calcula el panel**, sólo con los dos
 presentes; su cobertura se cuenta aparte de la de `net_revenue` (§3.1).
+
+**Los gastos son dos tablas y no una** (fase 15). `expenses` es el **catálogo de conceptos**
+—`name`, `description`, baja pasiva y `Auditable`— y **no tiene importe**: son cuatro o cinco
+filas, «Gasolina», «Pago al transportista», «Mantenimiento». `route_expenses` es donde está el
+dinero: `pickup_route_id`, `expense_id`, `amount` `decimal(10,2)`, `recurrent` y el par
+`starts_on`/`ends_on`.
+
+**El importe es de la ruta, no del concepto**, y ésa es toda la razón de que sean dos tablas:
+ni todos los transportistas cobran lo mismo ni todas las rutas queman la misma gasolina. Con
+un único `cost` en el catálogo habría que repetir el concepto —«Gasolina Ruta 1», «Gasolina
+Ruta 3»— y entonces «cuánto se va en gasolina» no tendría respuesta, porque para la base
+serían dos cosas distintas. Es el mismo motivo por el que `merchants` apunta a
+`pickup_route_id` en vez de guardar el nombre de la ruta en texto.
+
+**Todo es mensual, y `starts_on`/`ends_on` dicen en qué meses** —ambos inclusive, `ends_on`
+nulo es «sigue vigente»—. Los meses se guardan como `date` con el día 1, convención que impone
+`RouteExpense::month()`. `recurrent` se guarda aparte y no se deduce de las fechas: un gasto
+recurrente cancelado al mes siguiente tiene las mismas fechas que uno puntual y no es lo
+mismo. `expenses_name_unique … WHERE deleted_at IS NULL` es parcial como los de `couriers`: el
+nombre de un concepto retirado queda libre. **No son un módulo de `settings`** aunque cuelguen
+de Configuraciones en el menú — ver la fase 15 de §7.
 
 **`couriers.maximum_volume` es lo que cabe en la furgoneta, en m³.** Añadido el
 13/08/2026, y lo usa el calendario de capacidades (§7, fase 6.E). Misma unidad y misma precisión —`decimal(8,3)`— que `volume_m3` de
@@ -648,6 +680,25 @@ renombrar desde el panel sin tocar nada más.
   `wire:ignore`), y está pinneada a Laravel 12.
 - **Filament.** Mismo argumento de peso: da el CRUD casi gratis, pero es maquinaria grande
   para dos tablas.
+- **Select2, Tom Select y Choices.js** (desplegables con buscador), 20/08/2026. Hacía falta la
+  función —con 93 comercios, elegir una ruta a base de scroll no es elegir— pero no la
+  librería. Select2 arrastra **jQuery** por un desplegable. Tom Select y Choices son vanilla,
+  pero los tres reescriben el DOM del `<select>`, así que con Livewire hay que envolverlos en
+  `wire:ignore` y re-sincronizar a mano el valor y la lista en cada render — el mismo problema
+  que hundió a TailAdmin. En su lugar hay un **`x-ui.searchable-select` propio**: ~40 líneas de
+  Alpine en `resources/js/app.js` —Alpine ya viene con Livewire, no se instala— más el Blade
+  del componente. **1,3 kB de JS** (0,66 kB comprimido) frente a los ~100 kB de jQuery +
+  Select2.
+
+  Dos decisiones dentro del componente que conviene no deshacer: **las opciones las pinta
+  Blade**, y Alpine sólo esconde y resalta `<li>` que ya existen —si la lista viviera en JS
+  habría que sincronizarla cuando Livewire vuelve a pintar, y enseñaría la lista vieja tras
+  crear una ruta—; y **el valor vive en un input oculto** con el `wire:model` del llamante, no
+  en el estado de Alpine, para que no haya dos verdades. La etiqueta que se ve con el
+  desplegable cerrado la pinta el servidor a partir de ese mismo valor. Búsqueda sin tildes
+  («chamberi» encuentra «Chamberí») y teclado completo: flechas, Enter, Escape.
+  `SearchableSelectTest` fija el contrato, incluido que **no quede ningún `<select>` nativo**
+  en las pantallas.
 - **El starter kit oficial de Livewire.** Trae Flux UI más pantallas de registro, perfil y
   recuperación de contraseña que acabaríamos borrando. Para ~5 usuarios internos, el login
   son unas 60 líneas.
@@ -719,6 +770,7 @@ docker compose logs -f vite
 | 12 | Roles y permisos, con su maestro | **Hecha** (18/08/2026) |
 | 13 | La ganancia por ruta: guardarla y enseñarla | **Hecha** (19/08/2026) salvo la decisión de si merece pantalla propia |
 | 14 | Configuraciones → Rentabilidad: los días hacia atrás de la ganancia | **Hecha** (19/08/2026), y el bot ya lee la clave |
+| 15 | Configuraciones → Gastos: lo que cuesta cada ruta al mes | **Hecha** (20/08/2026) |
 
 > La tabla se quedó en la fase 5 hasta el **17/08/2026**, con seis fases descritas más abajo y
 > ninguna listada aquí: quien abría el documento por §7 leía que el proyecto iba por la mitad.
@@ -1474,6 +1526,74 @@ en ámbar sólo cuando existe, para que un día limpio no lleve un color de avis
 que lleva a las incidencias de esa ruta ese día** (`?ut=`, ver el diálogo más abajo), ámbar
 cuando hubo paquetes fuera de la ruta y gris cuando no: está siempre, pero sólo llama la
 atención si hay algo que mirar.
+
+**Y debajo del reparto, lo que se facturó por esos paquetes sin IVA** (20/08/2026, a petición).
+Es la misma suma que ya hacía el diálogo desde la fase 13, subida a la tabla para poder recorrer
+la semana sin abrir una celda. **Sale del mismo agregado**, con dos `selectRaw` más en la misma
+consulta: no cuesta ni una consulta ni una fila extra. Tres cosas que hay que respetar y que
+fija `CapacityCalendarTest`:
+
+- **Su cobertura es suya**, no la del volumen: `count(net_revenue)` y no `count(volume_m3)`. Son
+  dos huecos distintos —el portal no dio el volumen, Envexpress no tenía el envío— y que a veces
+  coincidan es casualidad. Va en el `title`, que es donde cabe.
+- **Sin una sola valoración no se pinta la línea**, en vez de un `0,00 €` que diría que no se
+  ganó nada. Una jornada anterior a la v4 del payload no trae ni una, y treinta guiones en la
+  semana serían ruido.
+- **No es la ganancia del día de la agencia**: aquí sólo están los envíos de esta UT, y ni
+  siquiera todos los que tienen ruta (§7, fase 13.C, regla 2).
+
+**Y debajo, lo que costó el día** (20/08/2026, a petición). Son **dos mitades** que se suman y
+que responden a preguntas distintas:
+
+- **El gasto fijo de la ruta, prorrateado.** Los gastos se llevan al mes (fase 15) y las
+  corridas son diarias, así que hay que repartir: `DailyExpenseShare`. **El divisor son los
+  días laborables del mes natural, de lunes a viernes** (decisión del cliente). Se descartó
+  «los días que de verdad hubo corrida», que a fin de mes repartiría exacto, porque ese divisor
+  crece según avanza el mes: mirando el 03/08 el día 3 saldrían 1.000 €/día y el 31, 47,62 €.
+  El mismo día diría tres cifras distintas según cuándo se mire. Lo que se paga: un sábado
+  trabajado no lleva gasto fijo, y un festivo entre semana se queda con su parte sin que nadie
+  la trabajase. Si algún día se trabajan sábados de forma habitual, esto pasa a Configuraciones.
+- **El `real_cost` de sus envíos**, que ya es diario y va por paquete (§3.1, v5).
+
+**De qué ruta son los gastos**: de la que el paquete llevaba **aquel día**
+(`assigned_route_id`, la foto de §3.1), no de la que hoy conduzca esa UT. Por eso el agregado
+de la tabla agrupa también por ruta — una fila más por UT y día, y ninguna consulta más.
+
+Tres cosas que fija `CapacityCalendarTest`:
+
+- **Nulo y no cero cuando la ruta no tiene gastos dados de alta**: un `0,00 €` diría que
+  mantenerla no cuesta nada, y lo que pasa es que nadie lo ha metido.
+- **Las dos mitades viajan separadas** (`fixed`, `real`) y sólo se suman al pintar. La fija se
+  sabe siempre; la real puede faltar, porque la teclea una persona en Envexpress. El `title`
+  las dice por separado en vez de dar por cerrada una cifra que no lo está.
+- **Un gasto de otro mes no cuenta**, que es lo que hace que cerrar una línea y abrir otra no
+  reescriba el pasado.
+
+**El reparto cuesta una consulta para la semana entera**, cruce o no cruce de mes: se traen las
+líneas que tocan el rango —decenas— y se divide en PHP. Con una por mes, una semana a caballo
+costaría dos. La tabla pasa así de cuatro consultas a **cinco**.
+
+**Y el diálogo abre ese coste concepto a concepto** (20/08/2026, a petición). En la celda cabe
+un total; quien pulsa la cifra viene justo a ver de dónde sale, así que ahí no vale un `title`:
+cada gasto con su importe mensual, **la división a la vista** —«800,00 €/mes ÷ 21 días
+laborables»— y lo que le toca al día, ordenados de mayor a menor. Debajo, aparte, el coste real
+de los envíos con su cobertura. Una ruta sin gastos dados de alta lo dice con todas las letras
+en vez de enseñar un cero. Cuesta **una segunda consulta**, y sólo con el diálogo abierto: la
+del desglose necesita los nombres de los conceptos, que el agregado de la tabla no trae.
+
+**Y cierra con la rentabilidad del día** (20/08/2026, a petición): `(ganancia − coste) / coste`,
+en verde o en rojo, con el margen en euros debajo. **Sobre el coste y no sobre lo facturado**,
+y el rótulo lo dice: son dos ratios distintos con los mismos datos —150 € de ingreso y 100 € de
+coste son un 50 % sobre coste y un 33 % sobre ingreso— y a simple vista parecen el mismo. **No
+se pinta si falta cualquiera de los dos lados, ni con el coste a cero**: ahí la división no
+existe, y un porcentaje sobre un coste que no se sabe sería la cifra más creíble y más falsa de
+la pantalla.
+
+⚠️ **Un porcentaje esconde su cobertura**, que es el riesgo de esta fila y no de las de arriba:
+un 41,75 % parece cerrado aunque la ganancia se haya sumado sobre 88 envíos de 94 y el coste
+sobre otros tantos que no tienen por qué ser los mismos. Por eso el `title` lo advierte cuando
+falta algún dato, y por eso **la celda de la tabla no lleva porcentaje**: ahí sólo van euros,
+que sí admiten el «88 de 94» al lado.
 
 **El neto en m³ salió de la celda ese mismo día, a petición.** Estuvo en la misma línea que el
 porcentaje hasta el 17/08/2026 —competían—, debajo y en pequeño hasta el 18/08, y ahora vive
@@ -2240,10 +2360,16 @@ código en la fila y que una jornada anterior a la v4 no pinta ni un euro; otros
 propios envíos** —no sobre los que traen volumen, que son otros—, que **el dinero de una parte
 no sigue a su volumen** (un caso a 90/10 en m³ y al revés en euros) y el rótulo.
 
-**Ganancia, no «rentabilidad».** El cliente la pide con ese nombre y en la conversación vale,
-pero **ninguna pantalla la rotula así**: la rentabilidad es el margen y el margen necesita el
-coste, que quedó fuera del contrato (§3.1). Poner «Rentabilidad» sobre una cifra que es
-facturación bruta invitaría a leer 1.011,86 € como beneficio.
+**Ganancia, no «rentabilidad» — mientras no hubo coste.** El cliente la pide con ese nombre y
+en la conversación vale, pero hasta el 20/08/2026 **ninguna pantalla la rotulaba así**: la
+rentabilidad es el margen y el margen necesita el coste, que entonces no viajaba en el contrato.
+Poner «Rentabilidad» sobre una cifra que es facturación bruta invitaría a leer 1.011,86 € como
+beneficio, y sigue siendo cierto: **la columna «Ganancia» se llama así y no cambia**.
+
+> **Lo que sí cambió el 20/08/2026:** el coste entró —`real_cost` con la v5 (§3.1) y los gastos
+> por ruta de la fase 15— así que el motivo por el que no se podía calcular un margen dejó de
+> existir. El diálogo del calendario **sí rotula «Rentabilidad»**, pero sobre las dos cifras a
+> la vez y con la resta delante, no sobre la facturación sola. Ver el calendario en §4.
 
 **13.D — Permisos.** Ninguno nuevo, como estaba previsto: es más información dentro de la
 pantalla de incidencias, que ya tiene su `incidents.view` (fase 12).
@@ -2366,6 +2492,101 @@ El salto grande está entre 0 y 1. El tercer día no se justifica por ese día s
 lunes**: el 10/08/2026, 103 de 997 paquetes se habían creado el domingo. Y hay ~30 envíos
 diarios que no aparecen en Envexpress con ninguna ventana: ésos no se recuperan subiendo el
 número.
+
+### Fase 15 — Configuraciones → Gastos. Hecha el 20/08/2026
+
+**Qué pide el cliente:** llevar en el panel **lo que le cuesta cada ruta**, colgando de
+Configuraciones. El ejemplo con el que lo planteó: una ruta puede tener sólo pago al
+transportista y gasolina, y otra además mantenimiento.
+
+**Empezó como una tabla y acabó siendo dos, y conviene saber por qué.** La primera versión fue
+un maestro plano —nombre, coste, descripción—. No sobrevive al caso de uso: el sueldo del
+transportista y la gasolina **no valen lo mismo en cada ruta**, así que un único importe en el
+concepto obliga a repetirlo («Gasolina Ruta 1», «Gasolina Ruta 3»), y en cuanto el nombre se
+teclea a mano en cada fila conviven «Gasolina», «gasolina» y «Combustible»: preguntar cuánto
+se va en combustible deja de tener respuesta. Es el mismo razonamiento por el que `merchants`
+apunta a `pickup_route_id` en vez de guardar el nombre de la ruta en texto. Así que:
+
+- **`expenses` es el catálogo de conceptos.** Nombre y descripción, sin importe. Cuatro o
+  cinco filas que casi nunca se tocan. Existe para que «Gasolina» sea **una sola cosa** en
+  toda la base.
+- **`route_expenses` es la línea real**, y es donde está el dinero: ruta, concepto, `amount`
+  al mes, `recurrent` y el periodo.
+
+**Todo es mensual** (decisión del cliente, 20/08/2026). No hay importes diarios ni anuales: un
+seguro que se paga de una vez se anota en el mes en que se paga.
+
+**Recurrente frente a puntual**, que es lo que el cliente pidió poder distinguir: el sueldo se
+cobra todos los meses, el mantenimiento del camión puede pasar éste y ninguno más. Se resuelve
+con tres columnas y no con un flag suelto:
+
+| | |
+|---|---|
+| `recurrent` | La intención. **No se deduce de las fechas**: un recurrente cancelado al mes siguiente tiene exactamente las mismas fechas que un puntual, y no son lo mismo. |
+| `starts_on` | Desde qué mes aplica, inclusive. |
+| `ends_on` | Hasta cuál, inclusive. **Nulo es «sigue vigente»**, y sólo lo tiene un recurrente: en un puntual la pantalla iguala el fin al principio sin preguntarlo dos veces. |
+
+Con eso, los gastos de una ruta en un mes M son **una sola consulta** que recoge a la vez los
+recurrentes vigentes y los puntuales de ese mes —`RouteExpense::scopeInMonth`—:
+`starts_on <= M AND (ends_on IS NULL OR ends_on >= M)`.
+
+**Una subida de sueldo no reescribe el pasado.** Se cierra la línea vieja en el último mes que
+valió y se abre otra: agosto sigue diciendo lo que costó agosto, que es la única forma de que
+contrastarlo contra la ganancia de agosto (§3.1) signifique algo. Lo fija
+`test_closing_a_line_and_opening_another_keeps_each_month_honest`.
+
+**Nada se solapa.** Dos líneas vivas del mismo concepto en la misma ruta pisándose en el
+tiempo duplicarían el gasto de un mes sin que ningún total lo dijera. No lo puede garantizar
+un índice —es un solape de rangos, no una igualdad— así que lo garantizan la validación de
+`RouteExpense::rules()` y el cerrojo de doble envío, que impide la carrera entre dos envíos
+simultáneos. Encadenar dos periodos que no se tocan sí se permite: es justo lo que hay que
+poder hacer.
+
+**Dos pantallas y un solo permiso.** «Gastos por ruta» (`/route-expenses`) es donde se
+trabaja: el mes es el estado de la pantalla, con flechas para moverse, el total del mes y el
+listado, que se puede filtrar por ruta. «Conceptos de gasto» (`/expenses`) mantiene el vocabulario y
+enseña en cuántas líneas se usa cada uno. Las dos van con `expenses.view` / `expenses.manage`:
+separarlas daría un permiso de tocar los nombres sin poder tocar los importes, que no protege
+de nada. Operaciones las ve y no las toca, igual que con los parámetros.
+
+**Integridad con el resto del maestro**, con el criterio de §4 —baja pasiva, así que las FK
+`restrictOnDelete` no llegan a dispararse y las reglas viven en los modelos—: un **concepto en
+uso** no se retira, y una **ruta con gastos** tampoco se da de baja. En los dos casos el
+motivo se dice en un toast legible, no en un error de servidor.
+
+**Casi nada de código nuevo, y es lo que se buscaba.** Las dos pantallas usan `CrudScreen`, el
+mismo trait que rutas, UT y comercios: de ahí salen el formulario, la búsqueda, la paginación,
+la baja y la reactivación, el cerrojo de doble envío y la transacción que envuelve también la
+escritura del historial. Lo propio de cada una son los campos, su consulta y la validación en
+caliente.
+
+**Las validaciones, en los dos lados y no en el mismo sitio dos veces.** Las reglas viven en
+`Expense::rules()` y `RouteExpense::rules()`, única fuente, y se usan tres veces: al guardar
+(`validate()`), campo a campo según se sale de cada uno (`validateOnly()` desde `updated()`,
+con `wire:model.blur`) y en los tests. El navegador aporta además sus propias restricciones
+—`required`, `min`, `step`, `maxlength`, `type="month"`— que son la primera barrera y **no
+cuentan como validación**: la que manda es la del servidor, porque a un método de Livewire se
+llega desde el navegador. Con esta fase entran en `lang/es/validation.php` las líneas de
+`after_or_equal` y `date_format`, que antes no usaba nadie.
+
+**El doble envío, también en los dos lados.** En el cliente el botón se desactiva mientras
+`save` está en vuelo (`wire:loading.attr`); en el servidor, `PreventsDoubleSubmit` toma un
+cerrojo atómico en la caché, que es el que de verdad lo impide — el botón desactivado no cubre
+el doble clic que llega antes de que reaccione el JS, ni dos pestañas, ni una petición
+reenviada.
+
+**Lo que todavía no cabe, a propósito:** un gasto **general de la agencia** —el alquiler de la
+nave, que no es de ninguna ruta—. `route_expenses.pickup_route_id` es obligatorio. El día que
+haga falta, la columna se hace nullable y la pantalla gana un «General»; lo que hay que
+decidir entonces no es técnico, es si ese gasto se prorratea entre rutas y cómo.
+
+**Cómo se probó:** `RouteExpensesCrudTest`, 45 casos —el mismo concepto costando distinto en
+dos rutas, el desglose por ruta, el recurrente que aparece en todos los meses siguientes y no
+en los anteriores, el puntual que sólo cuenta en el suyo, el cierre de un periodo y la apertura
+del siguiente, los cuatro casos de solape, el día 1 en la columna, los dos decimales exactos,
+el cero aceptado y el negativo rechazado, la navegación por meses, los filtros, el doble envío,
+el historial con autor, la transacción, los mensajes en castellano y las dos cerraduras de
+permisos— y `ExpensesCrudTest`, 33 más para el catálogo.
 
 ## 8. Pendientes y decisiones abiertas
 

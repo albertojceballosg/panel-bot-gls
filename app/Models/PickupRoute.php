@@ -23,11 +23,10 @@ class PickupRoute extends Model
     protected $fillable = ['name'];
 
     /**
-     * Con borrado pasivo la FK `restrictOnDelete` de `merchants` no llega a
-     * dispararse —no hay DELETE que restringir—, así que la regla se sostiene
-     * aquí. Sin esto, dar de baja una ruta dejaría a sus comercios apuntando a
-     * una ruta invisible: seguirían en la base, fuera del maestro y sin que
-     * nadie lo note.
+     * Con borrado pasivo las FK `restrictOnDelete` que apuntan aquí no llegan a dispararse
+     * —no hay DELETE que restringir—, así que las reglas se sostienen aquí. Sin esto, dar de
+     * baja una ruta dejaría a sus comercios y a sus gastos apuntando a una ruta invisible:
+     * seguirían en la base, fuera del maestro y sin que nadie lo note.
      */
     protected static function booted(): void
     {
@@ -43,6 +42,20 @@ class PickupRoute extends Model
                     $vivos === 1 ? 'Muévelo' : 'Muévelos',
                 ));
             }
+
+            // Y sus gastos (fase 15). Una línea huérfana seguiría sumando en los totales por
+            // concepto sin que su ruta apareciese ya en ninguna pantalla.
+            $gastos = $pickupRoute->routeExpenses()->count();
+
+            if ($gastos > 0) {
+                throw new RuntimeException(sprintf(
+                    'La ruta "%s" todavía tiene %d %s. %s antes de darla de baja.',
+                    $pickupRoute->name,
+                    $gastos,
+                    $gastos === 1 ? 'gasto' : 'gastos',
+                    $gastos === 1 ? 'Retíralo' : 'Retíralos',
+                ));
+            }
         });
     }
 
@@ -50,6 +63,15 @@ class PickupRoute extends Model
     public function merchants(): HasMany
     {
         return $this->hasMany(Merchant::class);
+    }
+
+    /**
+     * Lo que le cuesta la ruta al mes, concepto a concepto (fase 15). El importe está aquí y
+     * no en el catálogo de conceptos porque es de la ruta: ver `RouteExpense`.
+     */
+    public function routeExpenses(): HasMany
+    {
+        return $this->hasMany(RouteExpense::class);
     }
 
     /**

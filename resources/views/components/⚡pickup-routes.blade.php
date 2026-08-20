@@ -49,6 +49,15 @@ new #[Layout('components.layouts.app')] class extends Component
         return true;
     }
 
+    /**
+     * Si esta cuenta puede entrar en la pantalla de comercios. Decide si el recuento de cada
+     * fila es un enlace o sólo un número: enlazar a un 403 parece un fallo del panel.
+     */
+    public function canSeeMerchants(): bool
+    {
+        return (bool) auth()->user()?->can('merchants.view');
+    }
+
     public function with(): array
     {
         return [
@@ -172,8 +181,25 @@ new #[Layout('components.layouts.app')] class extends Component
                                     @endif
                                 </td>
 
+                                {{-- El recuento lleva a los comercios de esa ruta, con el
+                                     filtro ya puesto (`?ruta=`). Es la pregunta que sigue
+                                     siempre a ver el número, y allí además se pueden tocar;
+                                     un diálogo aquí sería una lista que no deja hacer nada.
+
+                                     Sin `merchants.view` no se enlaza: el permiso de ver
+                                     rutas no puede convertirse en uno de ver comercios por
+                                     pulsar una cifra (§7, fase 12). Y con cero comercios
+                                     tampoco, que no hay nada al otro lado. --}}
                                 <td class="px-6 py-3 text-right tabular-nums text-slate-700">
-                                    {{ $pickupRoute->merchants_count }}
+                                    @if ($pickupRoute->merchants_count > 0 && $this->canSeeMerchants())
+                                        <a href="{{ route('merchants', ['ruta' => $pickupRoute->id]) }}" wire:navigate
+                                           class="font-medium text-brand-700 underline-offset-4 hover:underline"
+                                           title="Ver {{ $pickupRoute->merchants_count === 1 ? 'el comercio' : 'los '.$pickupRoute->merchants_count.' comercios' }} de esta ruta">
+                                            {{ $pickupRoute->merchants_count }}
+                                        </a>
+                                    @else
+                                        {{ $pickupRoute->merchants_count }}
+                                    @endif
                                 </td>
 
                                 <td class="px-6 py-3">

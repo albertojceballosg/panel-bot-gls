@@ -4,6 +4,7 @@ use App\Models\Merchant;
 use App\Models\PickupRoute;
 use App\Support\CrudScreen;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Url;
 use Livewire\Component;
 
 /**
@@ -26,8 +27,35 @@ new #[Layout('components.layouts.app')] class extends Component
 
     public string $pickup_route_id = '';
 
-    /** Filtro del listado, aparte de la búsqueda por texto. */
+    /**
+     * Filtro del listado, aparte de la búsqueda por texto.
+     *
+     * En la URL (`?ruta=`) desde el 20/08/2026: de ahí se llega desde el recuento de
+     * comercios de la pantalla de rutas, y de paso el filtro se puede compartir por enlace.
+     * Mismo patrón que el `?ut=` del detalle de una jornada.
+     */
+    #[Url(as: 'ruta', except: '')]
     public string $routeFilter = '';
+
+    /**
+     * El `?ruta=` llega por la red y puede traer cualquier cosa. Sin esto, un `?ruta=abc`
+     * acabaría en el `where` contra una columna `bigint` y Postgres devolvería un 500; y un
+     * id que ya no existe dejaría la pantalla filtrando por nada sin decirlo. En los dos
+     * casos se cae al «todas las rutas», que es lo que se ve sin filtro.
+     */
+    public function mount(): void
+    {
+        if ($this->routeFilter === '') {
+            return;
+        }
+
+        // `ctype_digit` **antes** de ir a la base, y no sólo el `exists`: un `where id = 'abc'`
+        // contra una columna `bigint` lo rechaza Postgres, así que la consulta que iba a
+        // comprobar el valor sería ella misma el 500.
+        if (! ctype_digit($this->routeFilter) || ! PickupRoute::withTrashed()->whereKey($this->routeFilter)->exists()) {
+            $this->routeFilter = '';
+        }
+    }
 
     protected function model(): string
     {
@@ -146,13 +174,12 @@ new #[Layout('components.layouts.app')] class extends Component
                             placeholder="Buscar por nombre o código…" aria-label="Buscar" />
             </div>
 
-            <x-ui.select wire:model.live="routeFilter" class="sm:w-44" aria-label="Filtrar por ruta">
-                <option value="">Todas las rutas</option>
-
-                @foreach ($pickupRoutes as $pickupRoute)
-                    <option value="{{ $pickupRoute->id }}">Ruta {{ $pickupRoute->name }}</option>
-                @endforeach
-            </x-ui.select>
+            <x-ui.searchable-select wire:model.live="routeFilter" class="sm:w-44"
+                                    aria-label="Filtrar por ruta"
+                                    :options="$pickupRoutes->mapWithKeys(fn ($r) => [$r->id => 'Ruta '.$r->name])->all()"
+                                    :value="$routeFilter"
+                                    placeholder="Todas las rutas"
+                                    search-placeholder="Buscar una ruta…" />
 
             <label class="flex items-center gap-2 text-sm whitespace-nowrap text-slate-600">
                 <input type="checkbox" wire:model.live="showingTrashed"
@@ -291,14 +318,12 @@ new #[Layout('components.layouts.app')] class extends Component
 
                 <x-ui.field label="Ruta" for="pickup_route_id" :error="$errors->first('pickup_route_id')"
                             hint="De aquí sale la UT que lo recoge.">
-                    <x-ui.select wire:model="pickup_route_id" id="pickup_route_id"
-                                 :invalid="$errors->has('pickup_route_id')">
-                        <option value="">Elige una ruta</option>
-
-                        @foreach ($pickupRoutes as $pickupRoute)
-                            <option value="{{ $pickupRoute->id }}">{{ $pickupRoute->name }}</option>
-                        @endforeach
-                    </x-ui.select>
+                    <x-ui.searchable-select wire:model="pickup_route_id" id="pickup_route_id"
+                                            :invalid="$errors->has('pickup_route_id')"
+                                            :options="$pickupRoutes->pluck('name', 'id')->all()"
+                                            :value="$pickup_route_id"
+                                            placeholder="Elige una ruta"
+                                            search-placeholder="Buscar una ruta…" />
                 </x-ui.field>
             </form>
 

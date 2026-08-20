@@ -13,6 +13,8 @@
 
 return [
 
+    // Los meses de un gasto por ruta se comparan entre sí: «hasta» nunca antes que «desde».
+    'after_or_equal' => 'El campo :attribute no puede ser anterior a :date.',
     'boolean' => 'El campo :attribute tiene que ser sí o no.',
     'confirmed' => 'El campo :attribute y su repetición no coinciden.',
     // Sin :attribute: la usa el perfil para autorizar el cambio de contraseña,
@@ -20,6 +22,10 @@ return [
     'current_password' => 'La contraseña actual no es correcta.',
     // :decimal se sustituye por el rango de la regla («0-3»), de ahí el «con».
     'decimal' => 'El campo :attribute tiene que ser un número con :decimal decimales.',
+    // La usan los `<input type="month">` de los gastos por ruta (`Y-m`) y el intake del bot
+    // para `corrida.fecha` (`Y-m-d`). **`:format` no es decorativo**: el bot no reintenta un
+    // 422 (§3.1, regla 4), así que el error tiene que decir qué formato se esperaba.
+    'date_format' => 'El campo :attribute tiene que tener el formato :format.',
     'email' => 'Eso no parece un correo válido.',
     'exists' => 'La opción elegida no existe.',
     // Sin :attribute: el único sitio que la usa es la subida de una copia, y
@@ -58,14 +64,20 @@ return [
     */
     'attributes' => [
         'code' => 'código',
+        'amount' => 'importe',
         'courier_id' => 'UT',
         'current_password' => 'contraseña actual',
+        'description' => 'descripción',
         'email' => 'correo',
+        'ends_on' => 'mes de fin',
+        'expense_id' => 'concepto',
         'last_name' => 'apellido',
         'maximum_volume' => 'volumen máximo',
         'name' => 'nombre',
         'password' => 'contraseña',
         'pickup_route_id' => 'ruta',
+        'recurrent' => 'repetición',
+        'starts_on' => 'mes de inicio',
     ],
 
 ];

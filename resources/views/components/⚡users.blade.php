@@ -378,13 +378,12 @@ new #[Layout('components.layouts.app')] class extends Component
 
                 <x-ui.field label="Rol" for="role" :error="$errors->first('role')"
                             hint="Decide a qué pantallas entra y qué puede tocar en ellas.">
-                    <x-ui.select wire:model="role" id="role" :invalid="$errors->has('role')">
-                        <option value="">Elige un rol…</option>
-
-                        @foreach ($roles as $rol)
-                            <option value="{{ $rol }}">{{ $rol }}</option>
-                        @endforeach
-                    </x-ui.select>
+                    <x-ui.searchable-select wire:model="role" id="role"
+                                            :invalid="$errors->has('role')"
+                                            :options="collect($roles)->mapWithKeys(fn ($rol) => [$rol => $rol])->all()"
+                                            :value="$role"
+                                            placeholder="Elige un rol…"
+                                            search-placeholder="Buscar un rol…" />
                 </x-ui.field>
 
                 <div class="grid gap-4 sm:grid-cols-2">

@@ -65,6 +65,18 @@ Route::middleware('auth')->group(function () {
     Route::livewire('/settings/{module}', 'settings')->name('settings')
         ->middleware('can:settings.view');
 
+    // Los gastos cuelgan de Configuraciones en el menú, pero son una pantalla
+    // suya y no un módulo de `/settings/{module}`: aquello es clave/valor y
+    // esto es un maestro con altas y bajas. De ahí el permiso propio.
+    Route::livewire('/expenses', 'expenses')->name('expenses')
+        ->middleware('can:expenses.view');
+
+    // Donde está el dinero: lo que cuesta cada ruta al mes. Mismo permiso que
+    // el catálogo —son las dos mitades de lo mismo— y el mes va en el estado
+    // del componente y no en la URL, porque es un filtro con valor por defecto.
+    Route::livewire('/route-expenses', 'route-expenses')->name('route-expenses')
+        ->middleware('can:expenses.view');
+
     // Sistema: mantenimiento del panel, no del maestro.
     Route::livewire('/roles', 'roles')->name('roles')
         ->middleware('can:roles.view');

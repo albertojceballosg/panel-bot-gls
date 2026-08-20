@@ -3,11 +3,14 @@
 namespace Tests\Feature;
 
 use App\Models\Courier;
+use App\Models\Expense;
 use App\Models\IncidentRun;
 use App\Models\PickupRoute;
+use App\Models\RouteExpense;
 use App\Models\RunPackage;
 use App\Models\Setting;
 use App\Models\User;
+use App\Support\DailyExpenseShare;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Livewire\Livewire;
@@ -702,7 +705,7 @@ class CapacityCalendarTest extends TestCase
 
     // --- Consultas ------------------------------------------------------------
 
-    public function test_the_whole_table_is_three_queries(): void
+    public function test_the_whole_table_is_five_queries(): void
     {
         $ruta = PickupRoute::create(['name' => '3']);
 
@@ -725,16 +728,17 @@ class CapacityCalendarTest extends TestCase
 
         Livewire::test('capacity-calendar');
 
-        // Corridas, agregado, maestro y la configuración de la pantalla (§7,
-        // fase 11). Cuatro, y las mismas cuatro con 5 UT que con 50: la tabla se
-        // arma en SQL, no fila a fila.
-        $this->assertSame(4, $consultas);
+        // Corridas, agregado, maestro, la configuración de la pantalla (§7, fase 11) y el
+        // gasto fijo del mes (fase 15). Cinco, y las mismas cinco con 5 UT que con 50 —y
+        // aunque la semana cruce de mes—: la tabla se arma en SQL, no fila a fila.
+        $this->assertSame(5, $consultas);
     }
 
-    public function test_the_breakdown_only_costs_a_query_when_it_is_open(): void
+    public function test_the_breakdown_only_costs_two_queries_when_it_is_open(): void
     {
-        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
-        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0);
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0, 'pickup_route_id' => $ruta->id]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, ['assigned_route_id' => $ruta->id]);
 
         $componente = Livewire::test('capacity-calendar');
 
@@ -745,9 +749,484 @@ class CapacityCalendarTest extends TestCase
 
         $componente->call('openDetail', 'Freddy GLS', $this->lunes->toDateString());
 
-        // Las cuatro de la tabla y una quinta, la del reparto: con el diálogo
-        // cerrado la pantalla no la paga.
-        $this->assertSame(5, $consultas);
+        // Las cinco de la tabla, la del reparto y la del desglose de gastos concepto a
+        // concepto: con el diálogo cerrado la pantalla no paga ninguna de las dos.
+        $this->assertSame(7, $consultas);
+    }
+
+    // --- La ganancia en la celda (20/08/2026, a petición del cliente) --------------
+
+    /**
+     * Debajo del reparto, lo que se facturó por esos paquetes. Es la misma suma que ya hacía
+     * el diálogo, pero en la tabla: se pedía poder recorrer la semana sin abrir una celda.
+     */
+    public function test_the_cell_adds_up_the_revenue_of_the_day(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10]);
+        $lunes = $this->runOn($this->lunes);
+
+        $this->package($lunes, 'Freddy GLS', 3.0, ['net_revenue' => 10.00]);
+        $this->package($lunes, 'Freddy GLS', 1.0, ['type' => RunPackage::TYPE_OTHER_ROUTE, 'net_revenue' => 4.15]);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        // Las dos mitades del reparto suman en la misma celda: la tabla enseña el día entero.
+        $this->assertSame(14.15, (float) $celda['revenue']);
+        $this->assertSame(2, $celda['priced']);
+    }
+
+    /**
+     * La cobertura va aparte del recuento de envíos, y no puede salir del de volumen: son
+     * dos huecos distintos —el portal no dio el volumen, Envexpress no tenía el envío— y
+     * coinciden por casualidad.
+     */
+    public function test_the_cell_counts_the_revenue_on_its_own_shipments(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10]);
+        $lunes = $this->runOn($this->lunes);
+
+        $this->package($lunes, 'Freddy GLS', 4.0, ['net_revenue' => 8.60]);
+        $this->package($lunes, 'Freddy GLS', 1.0, ['net_revenue' => null]);
+        $this->package($lunes, 'Freddy GLS', null, ['net_revenue' => 2.40]);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        $this->assertSame(3, $celda['shipments']);
+        $this->assertSame(2, $celda['measured']);   // los que traen volumen
+        $this->assertSame(2, $celda['priced']);     // los que traen ganancia, que son otros
+        $this->assertSame(11.00, (float) $celda['revenue']);
+    }
+
+    /**
+     * Sin una sola valoración —una jornada anterior a la v4 del payload— la celda no dice
+     * 0,00 €, que sería mentira: no pinta la línea. Mismo criterio que el volumen (§3.1).
+     */
+    public function test_a_day_without_any_revenue_has_no_amount_in_the_cell(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10]);
+        $lunes = $this->runOn($this->lunes);
+
+        $this->package($lunes, 'Freddy GLS', 4.0, ['net_revenue' => null]);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        $this->assertNull($celda['revenue']);
+        $this->assertSame(0, $celda['priced']);
+    }
+
+    public function test_the_cell_prints_the_amount_in_euros(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10]);
+        $lunes = $this->runOn($this->lunes);
+
+        $this->package($lunes, 'Freddy GLS', 4.0, ['net_revenue' => 1011.86]);
+
+        Livewire::test('capacity-calendar')->assertSee('1.011,86 €');
+    }
+
+    /** Cada día el suyo: la ganancia no se arrastra de una columna a otra. */
+    public function test_each_day_keeps_its_own_revenue(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10]);
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, ['net_revenue' => 10.00]);
+        $this->package($this->runOn($this->lunes->copy()->addDay()), 'Freddy GLS', 4.0, ['net_revenue' => 25.50]);
+
+        $fila = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS');
+
+        $this->assertSame(10.00, (float) $fila['days'][$this->lunes->toDateString()]['revenue']);
+        $this->assertSame(25.50, (float) $fila['days'][$this->lunes->copy()->addDay()->toDateString()]['revenue']);
+    }
+
+    // --- El coste del día (20/08/2026, a petición del cliente) ---------------------
+
+    /** Un gasto mensual vivo en esa ruta, para repartir. */
+    private function gastoMensual(PickupRoute $ruta, string $importe, ?Carbon $desde = null): RouteExpense
+    {
+        static $n = 0;
+
+        return RouteExpense::create([
+            'pickup_route_id' => $ruta->id,
+            'expense_id' => Expense::create(['name' => 'Concepto '.(++$n)])->id,
+            'amount' => $importe,
+            'recurrent' => true,
+            'starts_on' => ($desde ?? $this->lunes)->copy()->startOfMonth()->toDateString(),
+            'ends_on' => null,
+        ]);
+    }
+
+    /**
+     * Los gastos se llevan al mes y las corridas son diarias, así que el fijo se reparte
+     * entre los días laborables del mes —lunes a viernes— y se le suma el coste real de los
+     * envíos de ese día.
+     */
+    public function test_the_monthly_expense_is_split_across_the_working_days(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+        $this->gastoMensual($ruta, '1000.00');
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, ['assigned_route_id' => $ruta->id]);
+
+        $laborables = DailyExpenseShare::workingDays($this->lunes);
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        $this->assertSame(round(1000 / $laborables, 6), round($celda['fixed'], 6));
+    }
+
+    /** El divisor es de lunes a viernes: los fines de semana no cuentan. */
+    public function test_the_working_days_of_a_month_are_monday_to_friday(): void
+    {
+        // Agosto de 2026 empieza en sábado y tiene 21 días laborables.
+        $this->assertSame(21, DailyExpenseShare::workingDays(Carbon::parse('2026-08-15')));
+
+        // Febrero de 2026, 20.
+        $this->assertSame(20, DailyExpenseShare::workingDays(Carbon::parse('2026-02-10')));
+    }
+
+    /** Las dos mitades se suman: el fijo prorrateado más lo que costaron los envíos. */
+    public function test_the_daily_cost_adds_the_prorated_expense_and_the_real_cost(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+        $this->gastoMensual($ruta, '1000.00');
+
+        $run = $this->runOn($this->lunes);
+        $this->package($run, 'Freddy GLS', 4.0, ['assigned_route_id' => $ruta->id, 'real_cost' => 2.20]);
+        $this->package($run, 'Freddy GLS', 1.0, ['assigned_route_id' => $ruta->id, 'real_cost' => 3.30]);
+
+        $fijo = 1000 / DailyExpenseShare::workingDays($this->lunes);
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        $this->assertSame(5.50, round($celda['real'], 2));
+        $this->assertSame(2, $celda['costed']);
+        $this->assertSame(round($fijo + 5.50, 6), round($celda['cost'], 6));
+    }
+
+    /**
+     * Sin un solo `real_cost` —hoy, que el bot todavía no manda la v5— el coste es sólo el
+     * fijo, y la mitad real se dice «no se sabe» en vez de fingir un cero.
+     */
+    public function test_without_any_real_cost_only_the_fixed_half_counts(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+        $this->gastoMensual($ruta, '1000.00');
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, ['assigned_route_id' => $ruta->id]);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        $this->assertNull($celda['real']);
+        $this->assertSame(0, $celda['costed']);
+        $this->assertSame(round($celda['fixed'], 6), round($celda['cost'], 6));
+    }
+
+    /** Y una ruta sin gastos dados de alta no pinta coste: cero diría que mantenerla es gratis. */
+    public function test_a_route_without_expenses_has_no_cost_at_all(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, ['assigned_route_id' => $ruta->id]);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        $this->assertNull($celda['fixed']);
+        $this->assertNull($celda['cost']);
+    }
+
+    /** Cada UT carga con los gastos de su ruta, no con los de la de al lado. */
+    public function test_each_route_carries_only_its_own_expenses(): void
+    {
+        $suya = PickupRoute::create(['name' => '1']);
+        $ajena = PickupRoute::create(['name' => '3']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $suya->id]);
+
+        $this->gastoMensual($suya, '1000.00');
+        $this->gastoMensual($ajena, '9999.00');
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, ['assigned_route_id' => $suya->id]);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        $this->assertSame(
+            round(1000 / DailyExpenseShare::workingDays($this->lunes), 6),
+            round($celda['fixed'], 6),
+        );
+    }
+
+    /**
+     * Un gasto que empieza el mes que viene no cuenta en éste. Es lo que hace que cerrar una
+     * línea y abrir otra no reescriba el pasado (fase 15).
+     */
+    public function test_an_expense_from_another_month_does_not_count(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+        $this->gastoMensual($ruta, '1000.00', $this->lunes->copy()->addMonth());
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, ['assigned_route_id' => $ruta->id]);
+
+        $celda = $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')['days'][$this->lunes->toDateString()];
+
+        $this->assertNull($celda['fixed']);
+    }
+
+    /** Y el importe sale en la celda, restando. */
+    public function test_the_cell_prints_the_cost(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+        $this->gastoMensual($ruta, '1000.00');
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, ['assigned_route_id' => $ruta->id]);
+
+        $esperado = number_format(1000 / DailyExpenseShare::workingDays($this->lunes), 2, ',', '.');
+
+        Livewire::test('capacity-calendar')->assertSee('−'.$esperado.' €');
+    }
+
+    // --- El coste en el desglose (20/08/2026, a petición del cliente) ----------------
+
+    /**
+     * En la celda cabe un total; quien abre el diálogo viene a ver **de dónde sale**. Así que
+     * el gasto fijo va concepto a concepto, con su importe mensual y lo que le toca al día.
+     */
+    public function test_the_breakdown_itemises_the_expenses_concept_by_concept(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+
+        RouteExpense::create([
+            'pickup_route_id' => $ruta->id,
+            'expense_id' => Expense::create(['name' => 'Pago al transportista'])->id,
+            'amount' => '1200.00', 'recurrent' => true,
+            'starts_on' => $this->lunes->copy()->startOfMonth()->toDateString(), 'ends_on' => null,
+        ]);
+        RouteExpense::create([
+            'pickup_route_id' => $ruta->id,
+            'expense_id' => Expense::create(['name' => 'Gasolina'])->id,
+            'amount' => '400.00', 'recurrent' => true,
+            'starts_on' => $this->lunes->copy()->startOfMonth()->toDateString(), 'ends_on' => null,
+        ]);
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, ['assigned_route_id' => $ruta->id]);
+
+        $detalle = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->viewData('detalle');
+
+        $laborables = DailyExpenseShare::workingDays($this->lunes);
+
+        $this->assertSame($laborables, $detalle['workingDays']);
+        $this->assertCount(2, $detalle['expenses']);
+
+        // De mayor a menor: lo que más pesa es lo primero que se busca.
+        $this->assertSame('Pago al transportista', $detalle['expenses'][0]['label']);
+        $this->assertSame(1200.0, $detalle['expenses'][0]['monthly']);
+        $this->assertSame(round(1200 / $laborables, 6), round($detalle['expenses'][0]['daily'], 6));
+
+        $this->assertSame('Gasolina', $detalle['expenses'][1]['label']);
+        $this->assertSame(round(1600 / $laborables, 6), round($detalle['fixed'], 6));
+    }
+
+    public function test_the_breakdown_shows_the_itemised_amounts_on_screen(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+
+        RouteExpense::create([
+            'pickup_route_id' => $ruta->id,
+            'expense_id' => Expense::create(['name' => 'Gasolina'])->id,
+            'amount' => '400.00', 'recurrent' => true,
+            'starts_on' => $this->lunes->copy()->startOfMonth()->toDateString(), 'ends_on' => null,
+        ]);
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, [
+            'assigned_route_id' => $ruta->id, 'real_cost' => 2.20,
+        ]);
+
+        $laborables = DailyExpenseShare::workingDays($this->lunes);
+
+        Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertSee('Coste del día')
+            ->assertSee('Gasolina')
+            // Con la división a la vista, para que el número no haya que creérselo.
+            ->assertSee('400,00 €/mes ÷ '.$laborables.' días laborables')
+            ->assertSee('Coste real de los envíos')
+            ->assertSee('2,20 €');
+    }
+
+    /** Las dos mitades se suman en el total del diálogo, igual que en la celda. */
+    public function test_the_breakdown_totals_both_halves_of_the_cost(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+
+        RouteExpense::create([
+            'pickup_route_id' => $ruta->id,
+            'expense_id' => Expense::create(['name' => 'Gasolina'])->id,
+            'amount' => '420.00', 'recurrent' => true,
+            'starts_on' => $this->lunes->copy()->startOfMonth()->toDateString(), 'ends_on' => null,
+        ]);
+
+        $run = $this->runOn($this->lunes);
+        $this->package($run, 'Freddy GLS', 4.0, ['assigned_route_id' => $ruta->id, 'real_cost' => 2.20]);
+        $this->package($run, 'Freddy GLS', 1.0, ['assigned_route_id' => $ruta->id, 'real_cost' => null]);
+
+        $detalle = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->viewData('detalle');
+
+        $fijo = 420 / DailyExpenseShare::workingDays($this->lunes);
+
+        $this->assertSame(2.20, round($detalle['real'], 2));
+        $this->assertSame(1, $detalle['costed']);
+        $this->assertSame(2, $detalle['shipments']);
+        $this->assertSame(round($fijo + 2.20, 6), round($detalle['cost'], 6));
+    }
+
+    /** Y una ruta sin gastos lo dice, en vez de enseñar un cero que sería mentira. */
+    public function test_the_breakdown_says_when_the_route_has_no_expenses(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, [
+            'assigned_route_id' => $ruta->id, 'real_cost' => 2.20,
+        ]);
+
+        Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertSee('Esta ruta no tiene gastos dados de alta este mes')
+            ->assertViewHas('detalle', fn ($d) => $d['fixed'] === null && round($d['cost'], 2) === 2.20);
+    }
+
+    // --- La rentabilidad del día (20/08/2026, a petición del cliente) -----------------
+
+    /** Ganancia, gasto fijo y coste real, ya montados, para las cuentas de abajo. */
+    private function diaCon(?string $ganancia, string $mensual, ?string $costeReal): array
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+
+        RouteExpense::create([
+            'pickup_route_id' => $ruta->id,
+            'expense_id' => Expense::create(['name' => 'Salario'])->id,
+            'amount' => $mensual, 'recurrent' => true,
+            'starts_on' => $this->lunes->copy()->startOfMonth()->toDateString(), 'ends_on' => null,
+        ]);
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, [
+            'assigned_route_id' => $ruta->id,
+            'net_revenue' => $ganancia,
+            'real_cost' => $costeReal,
+        ]);
+
+        return Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->viewData('detalle');
+    }
+
+    /**
+     * `(ganancia − coste) / coste`. **Sobre el coste y no sobre lo facturado**: son dos ratios
+     * distintos con los mismos datos —aquí, 50 % frente a 33 %— y a simple vista parecen el
+     * mismo, así que el que se enseña tiene que estar fijado.
+     */
+    public function test_the_profitability_is_the_margin_over_the_cost(): void
+    {
+        // 21 laborables en agosto de 2026: 420 €/mes son 20 € al día. Con 80 € de coste real,
+        // el coste del día son 100 € clavados y la ganancia 150 €.
+        $detalle = $this->diaCon('150.00', '420.00', '80.00');
+
+        $this->assertSame(100.0, round($detalle['cost'], 2));
+        $this->assertSame(50.0, round($detalle['margin'], 2));
+        $this->assertSame(0.5, round($detalle['profitability'], 4));
+
+        // Sobre lo facturado saldría un 33 %: no es el que se enseña.
+        $this->assertNotSame(round(50 / 150, 4), round($detalle['profitability'], 4));
+    }
+
+    public function test_a_day_that_loses_money_shows_it_in_negative(): void
+    {
+        $detalle = $this->diaCon('80.00', '420.00', '80.00');
+
+        $this->assertSame(-20.0, round($detalle['margin'], 2));
+        $this->assertSame(-0.2, round($detalle['profitability'], 4));
+    }
+
+    public function test_the_dialog_prints_the_profitability(): void
+    {
+        $this->diaCon('150.00', '420.00', '80.00');
+
+        Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertSee('Rentabilidad')
+            ->assertSee('+50,00 %')
+            ->assertSee('+50,00 € sobre un coste de 100,00 €');
+    }
+
+    /**
+     * El orden de la tarjeta, que se pidió expresamente: primero el dinero —ganancia, coste y
+     * lo que queda— y la ocupación al final, como contexto del reparto que viene debajo.
+     */
+    public function test_the_card_puts_the_money_first_and_the_occupancy_last(): void
+    {
+        $this->diaCon('150.00', '420.00', '80.00');
+
+        // Sobre el HTML y no con `assertSeeInOrder`: el de Livewire mira el JSON de la
+        // respuesta, donde los acentos van escapados y «Ocupación» no aparece tal cual.
+        $html = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->html();
+
+        $posiciones = collect(['Ganancia de sus rutas', 'Coste del día', 'Rentabilidad', 'Ocupación del día', 'De su ruta'])
+            ->map(function (string $rotulo) use ($html) {
+                $donde = mb_strpos($html, $rotulo);
+                $this->assertNotFalse($donde, "No se pinta «{$rotulo}».");
+
+                return $donde;
+            });
+
+        $this->assertSame($posiciones->sort()->values()->all(), $posiciones->all());
+    }
+
+    /**
+     * Sin coste no hay divisor: nula, y la fila no se pinta. Un porcentaje sobre un coste que
+     * no se sabe sería la cifra más creíble y más falsa de la pantalla.
+     */
+    public function test_without_a_cost_there_is_no_profitability(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, [
+            'assigned_route_id' => $ruta->id, 'net_revenue' => 150.00,
+        ]);
+
+        $detalle = Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->viewData('detalle');
+
+        $this->assertNull($detalle['cost']);
+        $this->assertNull($detalle['margin']);
+        $this->assertNull($detalle['profitability']);
+
+        Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertDontSee('Rentabilidad');
+    }
+
+    /** Y sin ganancia tampoco: restarle el coste a lo que no se sabe no da un margen. */
+    public function test_without_revenue_there_is_no_profitability(): void
+    {
+        $detalle = $this->diaCon(null, '420.00', '80.00');
+
+        $this->assertNull($detalle['revenue']);
+        $this->assertNull($detalle['margin']);
+        $this->assertNull($detalle['profitability']);
     }
 
     /**

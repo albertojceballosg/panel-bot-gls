@@ -114,13 +114,12 @@ new #[Layout('components.layouts.app')] class extends Component
                             placeholder="Buscar por autor o por registro…" aria-label="Buscar" />
             </div>
 
-            <x-ui.select wire:model.live="moduleFilter" class="sm:w-48" aria-label="Filtrar por módulo">
-                <option value="">Todos los módulos</option>
-
-                @foreach ($modules as $clase => $etiqueta)
-                    <option value="{{ $clase }}">{{ $etiqueta }}</option>
-                @endforeach
-            </x-ui.select>
+            <x-ui.searchable-select wire:model.live="moduleFilter" class="sm:w-48"
+                                    aria-label="Filtrar por módulo"
+                                    :options="$modules"
+                                    :value="$moduleFilter"
+                                    placeholder="Todos los módulos"
+                                    search-placeholder="Buscar un módulo…" />
         </div>
 
         @if ($logs->isEmpty())

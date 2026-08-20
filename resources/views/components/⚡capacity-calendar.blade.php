@@ -3,7 +3,9 @@
 use App\Models\Courier;
 use App\Models\IncidentRun;
 use App\Models\Setting;
+use App\Models\RouteExpense;
 use App\Models\RunPackage;
+use App\Support\DailyExpenseShare;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Layout;
@@ -114,9 +116,10 @@ new #[Layout('components.layouts.app')] class extends Component
      *
      * @param  Collection<int, object>  $celdas  Las agregadas de esta UT, una por día.
      * @param  Collection<int, Carbon>  $dias
+     * @param  array<string, array<int, float>>  $gastos  Gasto fijo por día y ruta.
      * @param  array{minimum: ?int, optimal: ?int}  $umbrales  Los de §7, fase 11.
      */
-    private function row(string $key, string $label, ?float $capacity, ?string $note, Collection $celdas, Collection $dias, array $umbrales): array
+    private function row(string $key, string $label, ?float $capacity, ?string $note, Collection $celdas, Collection $dias, array $umbrales, array $gastos): array
     {
         $porDia = $celdas->keyBy('dia');
 
@@ -128,7 +131,7 @@ new #[Layout('components.layouts.app')] class extends Component
             'label' => $label,
             'capacity' => $capacity,
             'note' => $note,
-            'days' => $dias->mapWithKeys(function (Carbon $dia) use ($porDia, $capacity, $umbrales) {
+            'days' => $dias->mapWithKeys(function (Carbon $dia) use ($porDia, $capacity, $umbrales, $gastos) {
                 $clave = $dia->toDateString();
                 $celda = $porDia[$clave] ?? null;
 
@@ -157,6 +160,13 @@ new #[Layout('components.layouts.app')] class extends Component
                     ? null
                     : ($v ?? 0) / $volumen;
 
+                // El gasto fijo del día es el de las rutas que movió esa UT. Nulo —y no
+                // cero— si ninguna de ellas tiene gastos ese mes: cero diría que mantener
+                // esa ruta no cuesta nada, y lo que pasa es que no está dado de alta.
+                $delDia = $gastos[$clave] ?? [];
+                $suyos = collect($celda->rutas)->filter(fn (int $ruta) => isset($delDia[$ruta]));
+                $fijo = $suyos->isEmpty() ? null : (float) $suyos->sum(fn (int $ruta) => $delDia[$ruta]);
+
                 return [$clave => [
                     'volume' => $volumen,
                     'usage' => $ocupacion,
@@ -171,6 +181,28 @@ new #[Layout('components.layouts.app')] class extends Component
 
                     'shipments' => (int) $celda->envios,
                     'measured' => (int) $celda->con_volumen,
+
+                    // Lo que dejaron esos paquetes, con su cobertura. **No es la ganancia del
+                    // día de la agencia**: aquí sólo están los envíos de esta UT (§7, fase
+                    // 13.C, regla 2). Nulo cuando ninguno tiene valoración —una jornada
+                    // anterior a la v4 no trae ni uno— y entonces la celda no pinta la línea.
+                    'revenue' => $celda->ganancia,
+                    'priced' => (int) $celda->con_ganancia,
+
+                    // Lo que costó el día: el gasto fijo del mes repartido entre los días
+                    // laborables (`DailyExpenseShare`) más lo que costaron los envíos.
+                    //
+                    // **Las dos mitades responden a preguntas distintas y por eso viajan
+                    // separadas**: la fija se sabe siempre —sale del maestro de gastos— y la
+                    // real puede no saberse, porque nadie rellenó la ficha en Envexpress. Un
+                    // total que las mezclara sin decirlo daría por cerrado un número que no
+                    // lo está.
+                    'fixed' => $fijo,
+                    'real' => $celda->coste_real,
+                    'costed' => (int) $celda->con_coste,
+                    'cost' => $fijo === null && $celda->coste_real === null
+                        ? null
+                        : ($fijo ?? 0.0) + ($celda->coste_real ?? 0.0),
                 ]];
             })->all(),
             'shipments' => $celdas->sum(fn ($c) => (int) $c->envios),
@@ -249,7 +281,7 @@ new #[Layout('components.layouts.app')] class extends Component
         // el driver un booleano.
         $reparto = "case when run_packages.type is null then 'own' else 'foreign' end";
 
-        $partes = RunPackage::query()
+        $filas = RunPackage::query()
             ->join('incident_runs', 'incident_runs.id', '=', 'run_packages.incident_run_id')
             ->whereNull('run_packages.withdrawn_at')
             ->where('incident_runs.run_date', $dia->toDateString())
@@ -259,7 +291,11 @@ new #[Layout('components.layouts.app')] class extends Component
                 fn ($q) => $q->where('run_packages.assigned_courier_name', $ut),
             )
             ->groupByRaw($reparto)
+            // Y por ruta, que es de donde cuelga el gasto fijo del mes (fase 15). No cuesta
+            // otra consulta: normalmente es una sola ruta por UT.
+            ->groupBy('run_packages.assigned_route_id')
             ->selectRaw($reparto.' as parte')
+            ->selectRaw('run_packages.assigned_route_id as ruta')
             ->selectRaw('sum(run_packages.volume_m3) as volumen')
             ->selectRaw('count(*) as envios')
             ->selectRaw('count(run_packages.volume_m3) as con_volumen')
@@ -269,8 +305,34 @@ new #[Layout('components.layouts.app')] class extends Component
             // no está en Envexpress es «no se sabe», no cero.
             ->selectRaw('sum(run_packages.net_revenue) as ganancia')
             ->selectRaw('count(run_packages.net_revenue) as con_ganancia')
-            ->get()
-            ->keyBy('parte');
+
+            // Y lo que costaron: la mitad diaria del coste (§3.1, v5).
+            ->selectRaw('sum(run_packages.real_cost) as coste_real')
+            ->selectRaw('count(run_packages.real_cost) as con_coste')
+            ->get();
+
+        // Las rutas que movió esa UT ese día, antes de plegar por mitad: de ellas cuelgan los
+        // gastos. La foto de aquel día (§3.1), no la que hoy conduzca esa UT.
+        $rutas = $filas->pluck('ruta')->filter()->unique()->map(intval(...))->values();
+
+        // Plegadas por mitad del reparto, que es como las lee el resto del método.
+        $partes = $filas
+            ->groupBy('parte')
+            ->map(fn (Collection $porRuta) => (object) [
+                'volumen' => $porRuta->whereNotNull('volumen')->isEmpty()
+                    ? null
+                    : (float) $porRuta->sum(fn ($f) => (float) $f->volumen),
+                'envios' => $porRuta->sum(fn ($f) => (int) $f->envios),
+                'con_volumen' => $porRuta->sum(fn ($f) => (int) $f->con_volumen),
+                'ganancia' => $porRuta->whereNotNull('ganancia')->isEmpty()
+                    ? null
+                    : (float) $porRuta->sum(fn ($f) => (float) $f->ganancia),
+                'con_ganancia' => $porRuta->sum(fn ($f) => (int) $f->con_ganancia),
+                'coste_real' => $porRuta->whereNotNull('coste_real')->isEmpty()
+                    ? null
+                    : (float) $porRuta->sum(fn ($f) => (float) $f->coste_real),
+                'con_coste' => $porRuta->sum(fn ($f) => (int) $f->con_coste),
+            ]);
 
         // Ese día esa UT no movió nada: no hay celda de la que hablar.
         if ($partes->isEmpty()) {
@@ -289,6 +351,41 @@ new #[Layout('components.layouts.app')] class extends Component
         // de Envexpress, el importe es «no se sabe» y no 0,00 € (§3.1).
         $facturado = $partes->filter(fn ($p) => $p->ganancia !== null);
         $ganancia = $facturado->isEmpty() ? null : (float) $facturado->sum(fn ($p) => (float) $p->ganancia);
+
+        // Ídem con lo que costaron los envíos.
+        $costeado = $partes->filter(fn ($p) => $p->coste_real !== null);
+        $costeReal = $costeado->isEmpty() ? null : (float) $costeado->sum(fn ($p) => (float) $p->coste_real);
+
+        // Y el gasto fijo, **concepto a concepto**: en la celda cabe un total, pero quien
+        // abre el diálogo viene justamente a ver de dónde sale. Es la única consulta que
+        // añade el desglose, y sólo se paga con el diálogo abierto.
+        $laborables = DailyExpenseShare::workingDays($dia);
+
+        $gastos = RouteExpense::query()
+            ->whereIn('pickup_route_id', $rutas)
+            ->inMonth($dia)
+            ->with(['expense', 'pickupRoute'])
+            ->get()
+            ->map(fn (RouteExpense $linea) => [
+                'label' => $linea->expense?->name ?? 'Concepto retirado',
+                // La ruta sólo si esa UT movió más de una ese día: si no, es ruido.
+                'route' => $rutas->count() > 1 ? $linea->pickupRoute?->name : null,
+                'monthly' => $linea->amount,
+                'daily' => $laborables === 0 ? 0.0 : $linea->amount / $laborables,
+            ])
+            ->sortByDesc('daily')
+            ->values();
+
+        // Nulo y no cero cuando la ruta no tiene gastos dados de alta: cero diría que
+        // mantenerla no cuesta nada, y lo que pasa es que nadie lo ha metido.
+        $fijo = $gastos->isEmpty() ? null : (float) $gastos->sum('daily');
+
+        $coste = $fijo === null && $costeReal === null ? null : ($fijo ?? 0.0) + ($costeReal ?? 0.0);
+
+        // Lo que quedó. Sólo con los dos lados presentes: ninguno de ellos es el margen por
+        // su cuenta, y restarle a la ganancia un coste que no se sabe daría un beneficio
+        // inflado con toda la pinta de ser exacto.
+        $margen = $ganancia === null || $coste === null ? null : $ganancia - $coste;
 
         $parte = function (string $clave, string $label, string $help) use ($partes, $total, $capacidad) {
             $fila = $partes[$clave] ?? null;
@@ -344,6 +441,30 @@ new #[Layout('components.layouts.app')] class extends Component
             // esta UT, y ni siquiera todos los que tienen ruta (§7, fase 13.C, regla 2).
             'revenue' => $ganancia,
             'priced' => $partes->sum(fn ($p) => (int) $p->con_ganancia),
+
+            // El coste del día, con las dos mitades separadas y el desglose de la fija. Se
+            // suman sólo al pintarlas: la fija se sabe siempre y la real puede faltar, y un
+            // total que las mezclase sin decirlo daría por cerrada una cifra que no lo está.
+            'fixed' => $fijo,
+            'expenses' => $gastos,
+            'workingDays' => $laborables,
+            'real' => $costeReal,
+            'costed' => $partes->sum(fn ($p) => (int) $p->con_coste),
+            'cost' => $coste,
+
+            // Lo que quedó y qué porcentaje del coste representa: la fórmula clásica,
+            // `(ingreso − coste) / coste`. **Es rentabilidad sobre coste** —«por cada euro
+            // gastado, cuánto gano»— y no margen sobre ventas, que se calcula sobre el
+            // ingreso y da otro número; el rótulo lo dice para que nadie lea el que no es.
+            //
+            // Nula si falta cualquiera de los dos lados, y también con el coste a cero: ahí
+            // la división no existe, y un porcentaje inventado sobre un coste que no se sabe
+            // sería la cifra más fácil de creer y la más falsa de toda la pantalla.
+            'margin' => $margen,
+            'profitability' => $margen === null || $coste === null || $coste <= 0
+                ? null
+                : $margen / $coste,
+
             'parts' => [
                 $parte('own', 'De su ruta', 'Pasaron en la tanda de su propia ruta'),
                 $parte('foreign', 'Fuera de su ruta', 'Acabaron en la tanda de otra ruta o descolgados'),
@@ -381,14 +502,31 @@ new #[Layout('components.layouts.app')] class extends Component
             ->join('incident_runs', 'incident_runs.id', '=', 'run_packages.incident_run_id')
             ->whereNull('run_packages.withdrawn_at')
             ->whereBetween('incident_runs.run_date', [$lunes->toDateString(), $domingo->toDateString()])
-            ->groupBy('incident_runs.run_date', 'run_packages.assigned_courier_name')
+            // Se agrupa además por la ruta del paquete —la foto de aquel día (§3.1), no la
+            // que tenga hoy el maestro— porque de ella cuelga el gasto fijo del mes que hay
+            // que repartirle. Normalmente es una sola por UT, así que no multiplica nada.
+            ->groupBy('incident_runs.run_date', 'run_packages.assigned_courier_name', 'run_packages.assigned_route_id')
             ->groupByRaw($reparto)
             ->selectRaw('incident_runs.run_date::text as dia')
             ->selectRaw('run_packages.assigned_courier_name as ut')
+            ->selectRaw('run_packages.assigned_route_id as ruta')
             ->selectRaw($reparto.' as parte')
             ->selectRaw('sum(run_packages.volume_m3) as volumen')
             ->selectRaw('count(*) as envios')
             ->selectRaw('count(run_packages.volume_m3) as con_volumen')
+
+            // Y lo facturado sin IVA por esos mismos paquetes, con su cobertura al lado
+            // (§3.1): `count` de la columna no cuenta los nulos, y un envío que no está en
+            // Envexpress es «no se sabe», no cero. Va en la misma consulta y no en otra
+            // porque es el mismo grupo: no cuesta una fila más.
+            ->selectRaw('sum(run_packages.net_revenue) as ganancia')
+            ->selectRaw('count(run_packages.net_revenue) as con_ganancia')
+
+            // Y lo que costaron de verdad, tecleado envío a envío en Envexpress (§3.1, v5).
+            // Es **la mitad diaria** del coste de la ruta; la otra es el gasto fijo del mes
+            // repartido, que no sale de aquí sino de `DailyExpenseShare`.
+            ->selectRaw('sum(run_packages.real_cost) as coste_real')
+            ->selectRaw('count(run_packages.real_cost) as con_coste')
             ->get()
             // Las dos mitades de una celda se pliegan aquí en una sola fila: el
             // SQL las trae separadas para poder repartir, pero la tabla enseña
@@ -399,12 +537,31 @@ new #[Layout('components.layouts.app')] class extends Component
                     ? null
                     : (float) $filas->sum(fn ($fila) => (float) $fila->volumen);
 
+                // Mismo trato que el volumen y por el mismo motivo: si ninguna de las dos
+                // mitades trae valoración, el importe del día es «no se sabe» y no 0,00 €.
+                $facturado = $mitades->whereNotNull('ganancia');
+                $costeado = $mitades->whereNotNull('coste_real');
+
                 return (object) [
                     'dia' => $mitades->first()->dia,
                     'ut' => $mitades->first()->ut,
                     'volumen' => $suma($mitades),
                     'propio' => $suma($mitades->where('parte', 'own')),
                     'ajeno' => $suma($mitades->where('parte', 'foreign')),
+                    'ganancia' => $facturado->isEmpty()
+                        ? null
+                        : (float) $facturado->sum(fn ($fila) => (float) $fila->ganancia),
+                    'con_ganancia' => $mitades->sum(fn ($fila) => (int) $fila->con_ganancia),
+
+                    // Mismo trato: sin un solo envío con coste tecleado, es «no se sabe».
+                    'coste_real' => $costeado->isEmpty()
+                        ? null
+                        : (float) $costeado->sum(fn ($fila) => (float) $fila->coste_real),
+                    'con_coste' => $mitades->sum(fn ($fila) => (int) $fila->con_coste),
+
+                    // Las rutas que movió esa UT ese día. De ellas cuelga el gasto fijo.
+                    'rutas' => $mitades->pluck('ruta')->filter()->unique()->map(intval(...))->values(),
+
                     'envios' => $mitades->sum(fn ($fila) => (int) $fila->envios),
                     'con_volumen' => $mitades->sum(fn ($fila) => (int) $fila->con_volumen),
                     'incidencias' => $mitades->where('parte', 'foreign')->sum(fn ($fila) => (int) $fila->envios),
@@ -426,6 +583,11 @@ new #[Layout('components.layouts.app')] class extends Component
             'optimal' => $ajustes['optimal_percent'] === '' ? null : (int) $ajustes['optimal_percent'],
         ];
 
+        // El gasto fijo de cada ruta repartido por día laborable (fase 15). Una sola consulta
+        // para la semana entera, cruce o no cruce de mes, y se calcula aquí —fuera de `row`—
+        // porque es el mismo reparto para todas las filas.
+        $gastos = DailyExpenseShare::forDays($dias);
+
         $filas = $maestro->map(fn (Courier $ut) => $this->row(
             $ut->name,
             $ut->name,
@@ -434,6 +596,7 @@ new #[Layout('components.layouts.app')] class extends Component
             $celdas[$ut->name] ?? $vacias,
             $dias,
             $umbrales,
+            $gastos,
         ));
 
         // Las que movieron volumen esa semana y ya no están en el maestro: se
@@ -450,12 +613,13 @@ new #[Layout('components.layouts.app')] class extends Component
                 $celdas[$nombre],
                 $dias,
                 $umbrales,
+                $gastos,
             ));
 
         // Y el volumen de las rutas que aquel día no llevaba nadie, por el mismo
         // motivo: es volumen que existió y tiene que verse en alguna fila.
         $sinUt = isset($celdas[''])
-            ? [$this->row('', 'Sin UT asignada', null, 'Rutas que aquel día no llevaba nadie', $celdas[''], $dias, $umbrales)]
+            ? [$this->row('', 'Sin UT asignada', null, 'Rutas que aquel día no llevaba nadie', $celdas[''], $dias, $umbrales, $gastos)]
             : [];
 
         return [
@@ -503,6 +667,31 @@ new #[Layout('components.layouts.app')] class extends Component
     // Envexpress y un 0,00 € diría que no dejó nada (§3.1). Mismo signo que usa el
     // detalle de la jornada, para que las dos pantallas se lean igual.
     $euros = fn (?float $i) => $i === null ? '—' : number_format($i, 2, ',', '.').' €';
+
+    /*
+     * El desglose del coste, que en el atributo no cabría legible. Las dos mitades se dicen
+     * por separado a propósito: la fija se sabe siempre —sale del maestro de gastos— y la
+     * real puede faltar, porque la teclea una persona en Envexpress (§3.1, v5). Callar esa
+     * diferencia daría por cerrada una cifra que no lo está.
+     */
+    $coste = function (array $celda) use ($euros) {
+        $partes = [];
+
+        if ($celda['fixed'] !== null) {
+            $partes[] = $euros($celda['fixed']).' de gastos fijos de la ruta, prorrateados '
+                .'entre los días laborables del mes';
+        }
+
+        $partes[] = match (true) {
+            $celda['real'] === null => 'ningún envío trae todavía su coste real',
+            $celda['costed'] < $celda['shipments'] => $euros($celda['real']).' de costes reales, '
+                .'sobre '.$celda['costed'].' de '.$celda['shipments'].' envíos',
+            default => $euros($celda['real']).' de costes reales, sobre los '
+                .$celda['shipments'].' envíos del día',
+        };
+
+        return implode(' + ', $partes);
+    };
 @endphp
 
 <div>
@@ -711,6 +900,37 @@ new #[Layout('components.layouts.app')] class extends Component
                                                         ({{ $ocupacion($celda['own']) }}<span class="text-slate-300"> · </span><span @class(['text-amber-600' => $celda['foreign'] > 0])>{{ $ocupacion($celda['foreign']) }}</span>)
                                                     </span>
                                                 @endif
+
+                                                {{-- Y lo que se facturó por esos paquetes, sin
+                                                     IVA. Sólo si hay algo que decir: en una
+                                                     jornada anterior a la v4 del payload no hay
+                                                     ni una valoración, y una línea de guiones en
+                                                     las treinta celdas de la semana sería ruido.
+                                                     La cobertura va en el `title`, que es donde
+                                                     cabe: aquí un «52 de 59» al lado del importe
+                                                     no se lee en diagonal. --}}
+                                                @if ($celda['revenue'] !== null)
+                                                    <span class="text-xs whitespace-nowrap text-slate-500"
+                                                          title="{{ $euros($celda['revenue']) }} facturados sin IVA{{ $celda['priced'] < $celda['shipments']
+                                                              ? ', sobre '.$celda['priced'].' de '.$celda['shipments'].' envíos: al resto no se le encontró valoración en Envexpress'
+                                                              : ', sobre los '.$celda['shipments'].' envíos del día' }}">
+                                                        {{ $euros($celda['revenue']) }}
+                                                    </span>
+                                                @endif
+
+                                                {{-- Y lo que costó ese día: el gasto fijo del
+                                                     mes repartido entre los días laborables
+                                                     más lo que costaron sus envíos. En rojo
+                                                     apagado para que no se confunda con la
+                                                     ganancia de arriba, que es la línea que
+                                                     se busca primero. El desglose de las dos
+                                                     mitades va en el `title`. --}}
+                                                @if ($celda['cost'] !== null)
+                                                    <span class="text-xs whitespace-nowrap text-rose-700/80"
+                                                          title="{{ $coste($celda) }}">
+                                                        −{{ $euros($celda['cost']) }}
+                                                    </span>
+                                                @endif
                                             </div>
                                         @endif
                                     </td>
@@ -728,6 +948,12 @@ new #[Layout('components.layouts.app')] class extends Component
                 tienen la capacidad puesta en el maestro. Entre paréntesis, de dónde sale: <strong>qué
                 parte de ese volumen pasó con su propia ruta y qué parte acabó fuera de ella</strong>
                 —suman el 100 %—, y el triángulo lleva a las incidencias de esa ruta ese día.
+                Debajo, <strong>lo que se facturó por esos paquetes sin IVA</strong>; pasa el ratón
+                por encima para ver sobre cuántos envíos se sumó, porque los que no aparecen en
+                Envexpress no cuentan. Las jornadas anteriores al 19/08/2026 no traían el dato y
+                esa línea no sale. Y en rojo, <strong>lo que costó el día</strong>: el gasto
+                mensual de esa ruta repartido entre los días laborables del mes, más el coste
+                real de sus envíos. El desglose de las dos mitades, también al pasar el ratón.
                 El color de cada porcentaje es el del tramo en que cae —malo, justo o bueno—, según los
                 umbrales y los colores de
                 <a href="{{ route('settings', ['module' => 'capacity-calendar']) }}" wire:navigate
@@ -753,7 +979,132 @@ new #[Layout('components.layouts.app')] class extends Component
                     :description="ucfirst($detalle['day']->translatedFormat('l j \d\e F \d\e Y'))"
                     close="closeDetail">
             <div class="rounded-lg bg-slate-50 px-4 py-3">
+                {{-- Lo que dejaron sus rutas ese día, con el número de envíos sobre los que
+                     se sumó pegado al importe (§7, fase 13.C, regla 1). **«De sus rutas» y
+                     no «del día»**: aquí sólo están los envíos de esta UT, así que llamarlo
+                     la ganancia del día sería aún más falso que en la pantalla de la
+                     jornada. Ganancia y no rentabilidad: es lo facturado sin IVA, y el
+                     margen necesitaría el coste, que no viaja en el contrato (§3.1). --}}
                 <div class="flex items-baseline justify-between gap-4">
+                    <div>
+                        <p class="text-sm font-medium text-shell-900">Ganancia de sus rutas</p>
+                        <p class="text-xs text-slate-500">
+                            Lo facturado sin IVA
+                            · {{ $detalle['priced'] }} de {{ $detalle['shipments'] }}
+                            {{ $detalle['shipments'] === 1 ? 'envío' : 'envíos' }} con dato
+                        </p>
+                    </div>
+
+                    <span class="text-2xl font-semibold text-shell-900 tabular-nums">
+                        {{ $euros($detalle['revenue']) }}
+                    </span>
+                </div>
+
+                {{-- Y lo que costó, que es la otra mitad de la pregunta. Se enseña **abierto**
+                     y no como un total con un `title`, porque quien pulsa la cifra viene justo
+                     a ver de dónde sale: el gasto mensual de cada concepto, lo que le toca al
+                     día, y aparte lo que costaron los envíos.
+
+                     Las dos mitades no se funden en una: la fija sale del maestro de gastos y
+                     se sabe siempre; la real la teclea una persona en Envexpress y puede
+                     faltar (§3.1, v5). --}}
+                @if ($detalle['cost'] !== null)
+                    <div class="mt-3 border-t border-slate-200 pt-3">
+                        <div class="flex items-baseline justify-between gap-4">
+                            <div>
+                                <p class="text-sm font-medium text-shell-900">Coste del día</p>
+                                <p class="text-xs text-slate-500">
+                                    Gastos de la ruta prorrateados + coste real de los envíos
+                                </p>
+                            </div>
+
+                            <span class="text-2xl font-semibold text-rose-700 tabular-nums">
+                                −{{ $euros($detalle['cost']) }}
+                            </span>
+                        </div>
+
+                        <dl class="mt-3 space-y-1.5 text-xs">
+                            @foreach ($detalle['expenses'] as $gasto)
+                                <div class="flex items-baseline justify-between gap-4">
+                                    <dt class="min-w-0 truncate text-slate-600">
+                                        {{ $gasto['label'] }}
+                                        @if ($gasto['route'])
+                                            <span class="text-slate-400">· Ruta {{ $gasto['route'] }}</span>
+                                        @endif
+                                        {{-- De dónde sale la división, para que el número no
+                                             haya que creérselo. --}}
+                                        <span class="text-slate-400">
+                                            ({{ $euros($gasto['monthly']) }}/mes ÷ {{ $detalle['workingDays'] }} días laborables)
+                                        </span>
+                                    </dt>
+                                    <dd class="shrink-0 tabular-nums text-slate-700">{{ $euros($gasto['daily']) }}</dd>
+                                </div>
+                            @endforeach
+
+                            @if ($detalle['fixed'] === null)
+                                <div class="text-slate-400">
+                                    Esta ruta no tiene gastos dados de alta este mes.
+                                </div>
+                            @endif
+
+                            <div class="flex items-baseline justify-between gap-4 border-t border-slate-200 pt-1.5">
+                                <dt class="min-w-0 text-slate-600">
+                                    Coste real de los envíos
+                                    <span class="text-slate-400">
+                                        @if ($detalle['real'] === null)
+                                            (ninguno trae el dato todavía)
+                                        @else
+                                            ({{ $detalle['costed'] }} de {{ $detalle['shipments'] }}
+                                            {{ $detalle['shipments'] === 1 ? 'envío' : 'envíos' }} con dato)
+                                        @endif
+                                    </span>
+                                </dt>
+                                <dd class="shrink-0 tabular-nums text-slate-700">
+                                    {{ $detalle['real'] === null ? '—' : $euros($detalle['real']) }}
+                                </dd>
+                            </div>
+                        </dl>
+                    </div>
+                @endif
+
+                {{-- Y lo que queda de las dos cifras de arriba, que es a lo que se venía.
+                     `(ganancia − coste) / coste`: **rentabilidad sobre coste**, «por cada euro
+                     gastado, cuánto gano». Se rotula así y no «margen» a secas porque el otro
+                     ratio habitual —sobre el ingreso— da un número distinto con los mismos
+                     datos, y a simple vista los dos parecen lo mismo.
+
+                     No se pinta si falta cualquiera de los dos lados ni con el coste a cero:
+                     ahí la división no existe, y un porcentaje sobre un coste que no se sabe
+                     sería la cifra más creíble y más falsa de la pantalla. --}}
+                @if ($detalle['profitability'] !== null)
+                    @php $gana = $detalle['margin'] >= 0; @endphp
+
+                    <div class="mt-3 flex items-baseline justify-between gap-4 border-t border-slate-200 pt-3">
+                        <div>
+                            <p class="text-sm font-medium text-shell-900">Rentabilidad</p>
+                            <p class="text-xs text-slate-500">
+                                {{ ($gana ? '+' : '−').$euros(abs($detalle['margin'])).' sobre un coste de '.$euros($detalle['cost']) }}
+                            </p>
+                        </div>
+
+                        <span @class([
+                            'text-2xl font-semibold tabular-nums',
+                            'text-emerald-700' => $gana,
+                            'text-rose-700' => ! $gana,
+                        ])
+                              title="({{ $euros($detalle['revenue']) }} − {{ $euros($detalle['cost']) }}) ÷ {{ $euros($detalle['cost']) }} × 100. Sobre el coste, no sobre lo facturado.{{ $detalle['priced'] < $detalle['shipments'] || $detalle['costed'] < $detalle['shipments']
+                                  ? ' Ojo: no todos los envíos traen los dos datos, así que el porcentaje se calcula sobre lo que se sabe.'
+                                  : '' }}">
+                            {{ ($gana ? '+' : '−').number_format(abs($detalle['profitability']) * 100, 2, ',', '.') }} %
+                        </span>
+                    </div>
+                @endif
+
+                {{-- La ocupación cierra la tarjeta desde el 20/08/2026, a petición: arriba
+                     va el dinero —ganancia, coste y lo que queda—, que es a lo que se abre
+                     este diálogo, y los metros cúbicos quedan como el contexto que explica
+                     el reparto de abajo. --}}
+                <div class="mt-3 flex items-baseline justify-between gap-4 border-t border-slate-200 pt-3">
                     <div>
                         <p class="text-sm font-medium text-shell-900">Ocupación del día</p>
                         <p class="text-xs text-slate-500">
@@ -767,27 +1118,6 @@ new #[Layout('components.layouts.app')] class extends Component
 
                     <span class="text-2xl font-semibold text-shell-900 tabular-nums">
                         {{ $detalle['usage'] === null ? '—' : $ocupacion($detalle['usage']) }}
-                    </span>
-                </div>
-
-                {{-- Lo que dejaron sus rutas ese día, con el número de envíos sobre los que
-                     se sumó pegado al importe (§7, fase 13.C, regla 1). **«De sus rutas» y
-                     no «del día»**: aquí sólo están los envíos de esta UT, así que llamarlo
-                     la ganancia del día sería aún más falso que en la pantalla de la
-                     jornada. Ganancia y no rentabilidad: es lo facturado sin IVA, y el
-                     margen necesitaría el coste, que no viaja en el contrato (§3.1). --}}
-                <div class="mt-3 flex items-baseline justify-between gap-4 border-t border-slate-200 pt-3">
-                    <div>
-                        <p class="text-sm font-medium text-shell-900">Ganancia de sus rutas</p>
-                        <p class="text-xs text-slate-500">
-                            Lo facturado sin IVA
-                            · {{ $detalle['priced'] }} de {{ $detalle['shipments'] }}
-                            {{ $detalle['shipments'] === 1 ? 'envío' : 'envíos' }} con dato
-                        </p>
-                    </div>
-
-                    <span class="text-2xl font-semibold text-shell-900 tabular-nums">
-                        {{ $euros($detalle['revenue']) }}
                     </span>
                 </div>
             </div>

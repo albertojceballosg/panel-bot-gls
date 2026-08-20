@@ -161,6 +161,49 @@ class PickupRoutesCrudTest extends TestCase
             ->assertSee('Retirada');
     }
 
+    // --- El recuento lleva a los comercios (20/08/2026) -----------------------
+
+    /**
+     * La pregunta que sigue a ver «21 comercios» es cuáles. Enlaza a la pantalla de
+     * comercios con el filtro puesto en la URL, en vez de abrir aquí una lista que no deja
+     * hacer nada con ellos.
+     */
+    public function test_the_merchant_count_links_to_the_merchants_of_that_route(): void
+    {
+        $pickupRoute = PickupRoute::create(['name' => '3']);
+        $this->merchantIn($pickupRoute);
+
+        Livewire::test('pickup-routes')
+            ->assertSeeHtml('href="'.route('merchants', ['ruta' => $pickupRoute->id]).'"');
+    }
+
+    /** Con cero comercios no hay nada al otro lado, así que es sólo un número. */
+    public function test_a_route_without_merchants_has_no_link(): void
+    {
+        $pickupRoute = PickupRoute::create(['name' => '6']);
+
+        Livewire::test('pickup-routes')
+            ->assertDontSeeHtml('href="'.route('merchants', ['ruta' => $pickupRoute->id]).'"');
+    }
+
+    /**
+     * Y sin `merchants.view` tampoco: el permiso de ver rutas no puede convertirse en uno de
+     * ver comercios por pulsar una cifra, y enlazar a un 403 parece un fallo del panel.
+     */
+    public function test_an_account_that_cannot_see_merchants_gets_no_link(): void
+    {
+        $pickupRoute = PickupRoute::create(['name' => '3']);
+        $this->merchantIn($pickupRoute);
+
+        $usuario = User::factory()->withoutRole()->create();
+        $usuario->givePermissionTo('pickup-routes.view');
+        $this->actingAs($usuario);
+
+        Livewire::test('pickup-routes')
+            ->assertSee('1')
+            ->assertDontSeeHtml('href="'.route('merchants', ['ruta' => $pickupRoute->id]).'"');
+    }
+
     // --- Historial ----------------------------------------------------------
 
     public function test_the_changes_reach_the_history_with_an_author(): void

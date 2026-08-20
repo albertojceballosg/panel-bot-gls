@@ -45,6 +45,49 @@ class MerchantsCrudTest extends TestCase
         $this->get('/merchants')->assertRedirect('/login');
     }
 
+    // --- El filtro por ruta viaja en la URL (20/08/2026) ----------------------
+
+    /** Es a donde lleva el recuento de comercios de la pantalla de rutas. */
+    public function test_the_route_filter_can_arrive_in_the_url(): void
+    {
+        $otra = PickupRoute::create(['name' => '9']);
+        $this->merchant('COBO FAMILY, S.L.');
+        $this->merchant('Zona Joven', null, $otra);
+
+        Livewire::withQueryParams(['ruta' => (string) $this->ruta->id])
+            ->test('merchants')
+            ->assertSet('routeFilter', (string) $this->ruta->id)
+            ->assertSee('COBO FAMILY, S.L.')
+            ->assertDontSee('Zona Joven');
+    }
+
+    /**
+     * Y llega por la red, así que no puede reventar. Un `?ruta=abc` contra una columna
+     * `bigint` sería un 500 de Postgres, no un filtro raro.
+     */
+    public function test_a_junk_route_in_the_url_falls_back_to_all_of_them(): void
+    {
+        $this->merchant('COBO FAMILY, S.L.');
+
+        Livewire::withQueryParams(['ruta' => 'abc'])
+            ->test('merchants')
+            ->assertOk()
+            ->assertSet('routeFilter', '')
+            ->assertSee('COBO FAMILY, S.L.');
+    }
+
+    /** Un id que ya no existe tampoco deja la pantalla filtrando por nada sin decirlo. */
+    public function test_a_route_that_does_not_exist_falls_back_to_all_of_them(): void
+    {
+        $this->merchant('COBO FAMILY, S.L.');
+
+        Livewire::withQueryParams(['ruta' => '999999'])
+            ->test('merchants')
+            ->assertOk()
+            ->assertSet('routeFilter', '')
+            ->assertSee('COBO FAMILY, S.L.');
+    }
+
     // --- Alta y edición -----------------------------------------------------
 
     public function test_it_creates_a_merchant(): void

@@ -105,6 +105,22 @@ class PermissionCatalog
                 ],
             ],
 
+            // Vive dentro de Configuraciones en el menú, pero tiene permiso propio: es un
+            // maestro con sus altas y sus bajas, no un parámetro de otra pantalla, y quien
+            // ajusta un color no tiene por qué poder tocar lo que cuesta la agencia.
+            //
+            // **Un solo módulo para las dos pantallas**, el catálogo de conceptos y los
+            // gastos por ruta: son las dos mitades de lo mismo y separarlas daría un permiso
+            // de tocar los nombres sin poder tocar los importes, que no protege de nada.
+            'expenses' => [
+                'label' => 'Gastos',
+                'route' => 'route-expenses',
+                'actions' => [
+                    self::VIEW => 'Ver los gastos de cada ruta y sus conceptos',
+                    self::MANAGE => 'Crear, editar y retirar gastos y conceptos',
+                ],
+            ],
+
             'settings' => [
                 'label' => 'Configuraciones',
                 'route' => 'settings',
@@ -234,6 +250,10 @@ class PermissionCatalog
                 // acusaciones contra personas (§7, fase 11) y colores de una
                 // pantalla que lee todo el equipo.
                 self::name('settings', self::VIEW),
+
+                // Los gastos, igual: se leen para entender un cálculo, pero lo que cuesta la
+                // agencia no lo cambia quien reparte paquetes.
+                self::name('expenses', self::VIEW),
             ],
         ];
     }
