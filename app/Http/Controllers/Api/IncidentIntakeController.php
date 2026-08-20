@@ -90,6 +90,13 @@ class IncidentIntakeController
             'paquetes.*.ganancia' => ['nullable', 'numeric', 'min:0'],
             'incidencias.*.ganancia' => ['nullable', 'numeric', 'min:0'],
 
+            // v5: los «Costes reales» que alguien teclea a mano en la ficha del envío en
+            // Envexpress. Nulo cuando nadie la rellenó, nunca negativo, y **el cero es un
+            // valor legítimo**: hay quien escribe 0 (ver la migración). Opcional porque una
+            // corrida anterior a la v5 no lo manda.
+            'paquetes.*.costes_reales' => ['nullable', 'numeric', 'min:0'],
+            'incidencias.*.costes_reales' => ['nullable', 'numeric', 'min:0'],
+
             'alertas' => ['present', 'array'],
             'alertas.*.tipo' => ['required', 'string'],
             'alertas.*.texto' => ['required', 'string'],
@@ -264,6 +271,12 @@ class IncidentIntakeController
             // bot no inventa un cero—, y nulo también en toda jornada anterior a la v4, que
             // no traía el campo. Las dos cosas se leen igual: «no se sabe» (ver la migración).
             'net_revenue' => $row['ganancia'] ?? null,
+
+            // v5: lo que costó el envío. `??` y no `?:` a propósito: un `0` tecleado es un
+            // dato —7 envíos en cinco días— y `?:` lo convertiría en nulo, que aquí significa
+            // «nadie rellenó la ficha». El margen (`net_revenue − real_cost`) lo calcula el
+            // panel y sólo con los dos presentes; el bot no manda ninguno (ver la migración).
+            'real_cost' => $row['costes_reales'] ?? null,
             'compatible_routes' => $row['rutas_compatibles'] ?? [],
 
             // v3: quiénes descargaban en el mismo bloque. Ausente en los payloads

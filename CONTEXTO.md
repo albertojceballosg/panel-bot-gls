@@ -243,6 +243,29 @@ concreta: *un paquete pasó por la cinta en la tanda de otra ruta* — o sea, lo
 le tocaba. No es el desvío horario contra la mediana, que el bot calcula aparte y manda como
 campo de apoyo.
 
+> **`version` va por 5 desde el 20/08/2026, y los dos lados la hablan.** La v5 **añade un solo
+> campo**: `costes_reales` en cada elemento de `paquetes[]` —y por herencia en `incidencias[]`—.
+> Es **lo que a la agencia le cuesta ese envío**, sin IVA, en euros: el campo «Costes reales»
+> que alguien **teclea a mano** en la ficha del envío en Envexpress. No se calcula. Es aditiva:
+> una v4 sigue entrando y queda con el coste a nulo —de hecho ya entraba antes de tocar nada,
+> porque `version` sólo se valida como entero y Laravel descarta las claves no declaradas—.
+> Este panel lo guarda en `run_packages.real_cost`; fijado en `IncidentIntakeV5Test`.
+>
+> **Los tres importes del mismo envío, que no son el mismo número.** En el 408622:
+> `ganancia` = 2,89 € (lo facturado sin IVA, `net_revenue`), el `coste` de las valoraciones =
+> 2,29 € —el que el portal usa para su «Beneficio», y que **sigue sin viajar en el contrato**—
+> y `costes_reales` = 2,20 €, que es el nuevo. **El margen lo calcula el panel** como
+> `net_revenue − real_cost`, y sólo cuando están los dos: nulo si falta cualquiera. Ninguno de
+> los dos es el margen por su cuenta y el bot no publica ninguno.
+>
+> ⚠️ **Aquí el `0` es un dato, no un hueco**, y es lo que separa este campo de `ganancia` y de
+> `volumen_m3`. Hay 7 envíos con un cero tecleado en cinco días, frente a 671 con la ficha
+> vacía. Quien lo lea usa `??` y nunca `?:` ni `empty()`, que convertirían ese cero en nulo.
+> Nulo significa sólo «nadie rellenó la ficha» o «la corrida es anterior a la v5». Y su
+> cobertura al sumar **necesita su propio contador**, no el de `net_revenue`: aunque el
+> 07/08/2026 coincidan (513 y 513), los costes los rellena una persona y pueden faltar en
+> envíos que sí tienen ganancia.
+>
 > **`version` va por 4 desde el 19/08/2026, y los dos lados la hablan.** La v4 **añade un solo
 > campo**: `ganancia` en cada elemento de `paquetes[]` —y por herencia en `incidencias[]`, que
 > se construye encima—. Es aditiva: una v3 sigue entrando y queda con la ganancia a nulo.
@@ -303,6 +326,7 @@ campo de apoyo.
       "desvio_min": 22.3,
       "volumen_m3": 0.129,
       "ganancia": 8.60,
+      "costes_reales": 6.40,
       "rutas_compatibles": [],
       "confianza": "baja",
       "motivo_confianza": ["ruta_dispersa"]
@@ -328,6 +352,7 @@ campo de apoyo.
 | `mensajero` | **Foto del día, no relación.** Texto, dentro de la ruta, a propósito: si el panel reasigna el conductor después, la incidencia debe seguir diciendo quién conducía aquel día. No enlazar contra `couriers` para pintarlo. |
 | `volumen_m3` | Volumen del envío en m³ (columna `volume_m3`). Añadido el 13/08/2026. **Nulo, no cero, cuando el portal no lo trae**: GLS devuelve `0` en parte de los envíos —29 de 493 el 03/08— y ahí un cero significa «no lo sé». Al sumarlo, la interfaz **tiene que decir sobre cuántos envíos** se hizo la suma, o dará a entender que una ruta ocupa menos de lo que ocupa. Opcional: un bot anterior a esa fecha no lo manda. |
 | `ganancia` | Desde la v4: **lo que se facturó por ese envío, sin IVA**, en euros. Sale de Envexpress: la suma de la columna `Precio` de sus valoraciones (servicio + suplementos). **No es el margen** — el margen es `ganancia − coste`. **Nula, no cero, cuando el envío no aparece en Envexpress**: 30 de 543 el 07/08/2026. Mismo criterio que `volumen_m3` y por el mismo motivo: un cero diría «no se ganó nada» y falsearía a la baja el total de una ruta. Quien la sume **tiene que decir sobre cuántos envíos**. Opcional: un bot anterior a la v4 no la manda. |
+| `costes_reales` | Desde la v5: **lo que a la agencia le cuesta ese envío**, sin IVA, en euros. Es el campo «Costes reales» de la ficha del envío en Envexpress, **tecleado a mano**: no se calcula, y no es el `coste` de las valoraciones —el del «Beneficio» del portal— que sigue sin viajar. En el 408622: ganancia 2,89 €, coste de valoraciones 2,29 €, `costes_reales` 2,20 €. **Nulo cuando nadie rellenó la ficha, pero el `0` es un valor real** y hay que guardarlo como tal: 7 envíos con cero tecleado en cinco días frente a 671 con la ficha vacía — al revés que en `ganancia`, aquí confundir cero y nulo se come un dato escrito por una persona. Al sumarlo, **su propia cobertura**, no la de `ganancia`. El margen (`ganancia − costes_reales`, y sólo con los dos presentes) lo calcula el panel: el bot no lo manda. Opcional: un bot anterior a la v5 no lo manda. |
 | `rutas_misma_tanda` | Desde la v3: las rutas cuya tanda principal era aquella en la que pasó el paquete — quiénes descargaban en ese bloque. **Incluye la propia ruta del paquete** si también descargaba ahí. Es lo que permite escribir *«Ruta 3 y Ruta 4 descargaron juntas»* en vez de *«dos furgonetas»*. Opcional: un bot anterior no la manda y queda `[]`. |
 | `rutas_compatibles` | Desde la v2: las otras rutas **cuya ventana también contiene esa hora**, y **sólo cuando hay dos o más** — o sea, las que ese día no se distinguen entre sí. Vacío si el encaje fue inequívoco (la ruta va en `ruta_observada` y **no** se repite aquí; en la v1 sí venía duplicada, y sumar las dos listas la contaba dos veces) o si no encajó ninguna. |
 | `confianza` | `alta` \| `baja`. |
@@ -478,6 +503,13 @@ y **nullable**, donde nulo significa «no se encontró el envío en Envexpress»
 la v4 añade: el coste no viaja (§3.1). **Ojo al sumarla:** esta tabla sólo guarda los envíos
 **con** ruta, así que su suma es la ganancia de las rutas, no la del día. La del día no está
 en este panel todavía (§8).
+
+**`run_packages.real_cost` es lo que costó el envío, sin IVA** (v5, 20/08/2026),
+`decimal(10,2)` y **nullable**, gemela de `net_revenue` salvo en una cosa: nulo significa aquí
+«nadie tecleó el campo en Envexpress» y **el `0` sí es un valor real**, así que no se puede
+tratar un cero como un hueco. Sin backfill: las filas anteriores se quedan a nulo, que es la
+verdad. **El margen es `net_revenue − real_cost` y lo calcula el panel**, sólo con los dos
+presentes; su cobertura se cuenta aparte de la de `net_revenue` (§3.1).
 
 **`couriers.maximum_volume` es lo que cabe en la furgoneta, en m³.** Añadido el
 13/08/2026, y lo usa el calendario de capacidades (§7, fase 6.E). Misma unidad y misma precisión —`decimal(8,3)`— que `volume_m3` de
@@ -686,7 +718,7 @@ docker compose logs -f vite
 | 11 | Configuraciones por módulo, y el calendario leyéndolas | **Hecha** (14/08/2026; el calendario, el 17/08/2026) |
 | 12 | Roles y permisos, con su maestro | **Hecha** (18/08/2026) |
 | 13 | La ganancia por ruta: guardarla y enseñarla | **Hecha** (19/08/2026) salvo la decisión de si merece pantalla propia |
-| 14 | Configuraciones → Rentabilidad: los días hacia atrás de la ganancia | **Hecha** (19/08/2026) en este repo; el bot todavía no lee la clave |
+| 14 | Configuraciones → Rentabilidad: los días hacia atrás de la ganancia | **Hecha** (19/08/2026), y el bot ya lee la clave |
 
 > La tabla se quedó en la fase 5 hasta el **17/08/2026**, con seis fases descritas más abajo y
 > ninguna listada aquí: quien abría el documento por §7 leía que el proyecto iba por la mitad.
@@ -2315,11 +2347,25 @@ real, en los tres estados:
 | `0` | `{"semiancho_min": 10, "dias_atras_ganancia": 0}`, entero |
 | `3` | `{"semiancho_min": 10, "dias_atras_ganancia": 3}`, entero |
 
-**Lo que falta, y está en el otro repo.** El bot todavía **no lee** esta clave: su `CONTEXT.md`
-§13.11 lista los cuatro cambios que le tocan. Los dos repos pueden ir por separado — una clave
-que el bot ignora no rompe nada, y un bot que la busque y no la encuentre corre con su 3—, pero
-**hasta que se haga allí, mover este ajuste no cambia nada**. Conviene decírselo al cliente si
-lo toca antes de tiempo.
+**El otro repo ya está al día (19/08/2026).** El bot **lee** esta clave: `rutas.leer_dias_atras`
+la saca del maestro y la corrida se la pasa a la fase de rentabilidad (`CONTEXT.md` §13.11). Un
+valor ilegible, decimal o fuera del 0–30 no le tumba la corrida: lo registra como error y sigue
+con su 3. Así que **mover este ajuste ya cambia lo que hace el bot** en la siguiente corrida.
+
+**Qué se gana o se pierde al moverlo**, medido por el bot sobre el 07/08/2026 (543 envíos), por
+si hay que afinar el `hint` con datos en vez de con intuición:
+
+| Días atrás | Envíos que encuentran su ganancia |
+|---|---|
+| 0 (sólo el día analizado) | 476 (87,7 %) |
+| 1 | 512 |
+| 2 | 513 |
+| 3 (lo que usa el bot sin configurar) | 513 (94,5 %) |
+
+El salto grande está entre 0 y 1. El tercer día no se justifica por ese día sino **por los
+lunes**: el 10/08/2026, 103 de 997 paquetes se habían creado el domingo. Y hay ~30 envíos
+diarios que no aparecen en Envexpress con ninguna ventana: ésos no se recuperan subiendo el
+número.
 
 ## 8. Pendientes y decisiones abiertas
 

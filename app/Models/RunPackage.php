@@ -32,7 +32,7 @@ class RunPackage extends Model
         'merchant_id', 'merchant_name',
         'assigned_route_id', 'assigned_route_name', 'assigned_courier_name',
         'observed_route_id', 'observed_route_name',
-        'type', 'belt_time', 'deviation_minutes', 'volume_m3', 'net_revenue',
+        'type', 'belt_time', 'deviation_minutes', 'volume_m3', 'net_revenue', 'real_cost',
         'compatible_routes', 'batch_shared_routes', 'confidence', 'confidence_reasons',
         'withdrawn_at',
     ];
@@ -58,6 +58,9 @@ class RunPackage extends Model
             'volume_m3' => 'float',
             // Ídem: nulo es «el envío no está en Envexpress», no «no dejó nada».
             'net_revenue' => 'float',
+            // Lo que costó el envío. Aquí, al revés que en las dos de arriba, **el cero es un
+            // dato**: alguien tecleó un 0 en la ficha. Nulo es «no lo rellenó nadie».
+            'real_cost' => 'float',
             'compatible_routes' => 'array',
             'batch_shared_routes' => 'array',
             'confidence_reasons' => 'array',
