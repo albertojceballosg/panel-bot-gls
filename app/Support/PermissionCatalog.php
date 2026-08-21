@@ -98,10 +98,10 @@ class PermissionCatalog
             // Las jornadas las escribe el bot (§3.1) y este calendario es una
             // lectura de ellas: no hay nada que gestionar.
             'capacity-calendar' => [
-                'label' => 'Calendario de capacidades',
+                'label' => 'Calendario de rendimiento',
                 'route' => 'capacity-calendar',
                 'actions' => [
-                    self::VIEW => 'Ver el calendario de capacidades',
+                    self::VIEW => 'Ver el calendario de rendimiento',
                 ],
             ],
 

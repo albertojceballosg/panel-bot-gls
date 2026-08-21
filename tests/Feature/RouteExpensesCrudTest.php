@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Courier;
 use App\Models\Expense;
 use App\Models\PickupRoute;
 use App\Models\RouteExpense;
@@ -202,6 +203,71 @@ class RouteExpensesCrudTest extends TestCase
             ->set('month', '2026-08')
             ->assertSee('puntual')
             ->assertSee('sólo agosto de 2026');
+    }
+
+    /**
+     * La UT de la ruta, en su columna. El gasto es de la ruta y no de la persona —por eso la
+     * línea no guarda mensajero—, pero quien lee esta pantalla reconoce antes «Freddy» que
+     * «Ruta 1», y en el listado de rutas ya se enseña igual.
+     */
+    public function test_the_listing_shows_the_courier_of_the_route(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'pickup_route_id' => $this->ruta->id]);
+        $this->linea();
+
+        Livewire::test('route-expenses')->set('month', '2026-08')->assertSee('Freddy GLS');
+    }
+
+    /** Una ruta sin UT sigue teniendo gastos: la columna lo dice y no se queda en blanco. */
+    public function test_a_route_without_a_courier_says_so(): void
+    {
+        $this->linea();
+
+        Livewire::test('route-expenses')->set('month', '2026-08')->assertSee('sin asignar');
+    }
+
+    /**
+     * Y la UT no puede costar una consulta por línea. Se compara una página de una línea
+     * contra una llena en vez de fijar un número: lo que importa es que no crezca con las
+     * filas, y un tope a ojo se queda viejo en cuanto la pantalla añada otra cosa.
+     */
+    public function test_the_courier_column_does_not_cost_one_query_per_line(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'pickup_route_id' => $this->ruta->id]);
+        $this->linea();
+
+        // La primera vez se cargan los permisos, que después ya están en caché.
+        $this->consultasDelListado();
+        $unaLinea = $this->consultasDelListado();
+
+        // La página entera: son 15 por página.
+        foreach (range(2, 15) as $i) {
+            $ruta = PickupRoute::create(['name' => "R{$i}"]);
+            Courier::create(['name' => "Mensajero {$i}", 'pickup_route_id' => $ruta->id]);
+            $this->linea(['pickup_route_id' => $ruta->id]);
+        }
+
+        $quinceLineas = $this->consultasDelListado();
+
+        $this->assertSame($unaLinea, $quinceLineas, "Con 15 líneas se hicieron {$quinceLineas} consultas ".
+            "y con una, {$unaLinea}: la pantalla está consultando por fila.");
+    }
+
+    /** Las consultas que dispara pintar el listado una vez. */
+    private function consultasDelListado(): int
+    {
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        Livewire::test('route-expenses')->set('month', '2026-08');
+
+        // `disableQueryLog` no vacía lo apuntado: sin el flush, la siguiente medida
+        // arrastraría ésta y todas parecerían crecer.
+        $consultas = count(DB::getQueryLog());
+        DB::disableQueryLog();
+        DB::flushQueryLog();
+
+        return $consultas;
     }
 
     // --- Alta y edición -------------------------------------------------------------------

@@ -76,7 +76,7 @@ class SettingsCatalog
             ],
 
             'capacity-calendar' => [
-                'label' => 'Calendario de capacidades',
+                'label' => 'Calendario de rendimiento',
                 'route' => 'capacity-calendar',
                 'description' => 'Cuándo la ocupación de una furgoneta es buena, justa o mala, y de qué color se pinta.',
 

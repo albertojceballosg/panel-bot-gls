@@ -215,7 +215,7 @@ class SettingsTest extends TestCase
         // cuándo es justo para lo que existe el historial (§4).
         $this->assertSame('70', $entrada->after['value']);
         $this->assertSame(
-            'Calendario de capacidades · Porcentaje mínimo de carga',
+            'Calendario de rendimiento · Porcentaje mínimo de carga',
             AuditPresenter::make()->record($entrada),
         );
     }

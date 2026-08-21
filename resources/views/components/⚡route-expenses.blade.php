@@ -156,7 +156,9 @@ new #[Layout('components.layouts.app')] class extends Component
             ->orderBy(Expense::select('name')->whereColumn('expenses.id', 'route_expenses.expense_id'));
 
         return [
-            'routeExpenses' => $ordenada->with(['pickupRoute', 'expense'])->paginate(self::POR_PAGINA),
+            // `pickupRoute.courier` para la columna «UT»: sin él la pantalla dispara una
+            // consulta por línea.
+            'routeExpenses' => $ordenada->with(['pickupRoute.courier', 'expense'])->paginate(self::POR_PAGINA),
 
             // El total del mes que se está mirando, no el de la página.
             'total' => (float) (clone $query)->sum('amount'),
@@ -344,10 +346,11 @@ new #[Layout('components.layouts.app')] class extends Component
         @else
             {{-- En móvil la tabla no cabe: que desborde ella y no la página. --}}
             <div class="overflow-x-auto">
-                <table class="w-full min-w-3xl text-sm">
+                <table class="w-full min-w-4xl text-sm">
                     <thead>
                         <tr class="border-b border-slate-200 text-left text-xs tracking-wider text-slate-500 uppercase">
                             <th class="px-6 py-3 font-semibold">Ruta</th>
+                            <th class="px-6 py-3 font-semibold">UT</th>
                             <th class="px-6 py-3 font-semibold">Concepto</th>
                             <th class="px-6 py-3 font-semibold">Periodo</th>
                             <th class="px-6 py-3 text-right font-semibold">Importe / mes</th>
@@ -359,6 +362,18 @@ new #[Layout('components.layouts.app')] class extends Component
                             <tr wire:key="gasto-{{ $linea->id }}" class="hover:bg-slate-50/75">
                                 <td class="px-6 py-3 font-medium text-shell-900">
                                     {{ $linea->pickupRoute?->name ?? '—' }}
+                                </td>
+
+                                {{-- Quién conduce esa ruta **hoy**, igual que en el listado de
+                                     rutas: el gasto es de la ruta y no de la persona, así que
+                                     esto es una ayuda para reconocerla, no un dato de la línea.
+                                     Una ruta puede no tener UT asignada y sigue teniendo gastos. --}}
+                                <td class="px-6 py-3">
+                                    @if ($linea->pickupRoute?->courier)
+                                        <span class="text-slate-700">{{ $linea->pickupRoute->courier->name }}</span>
+                                    @else
+                                        <span class="text-slate-400">sin asignar</span>
+                                    @endif
                                 </td>
 
                                 <td class="px-6 py-3">

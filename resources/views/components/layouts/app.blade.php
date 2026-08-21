@@ -27,7 +27,7 @@
                 // enlace desde el que acabas de llegar.
                 ['route' => 'incidents', 'label' => 'Incidencias', 'can' => 'incidents.view',
                  'owns' => ['incidents', 'incident-run']],
-                ['route' => 'capacity-calendar', 'label' => 'Calendario de capacidades',
+                ['route' => 'capacity-calendar', 'label' => 'Calendario de rendimiento',
                  'can' => 'capacity-calendar.view'],
             ],
         ],

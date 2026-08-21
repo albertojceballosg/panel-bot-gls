@@ -42,6 +42,75 @@ new #[Layout('components.layouts.app')] class extends Component
     public string $week = '';
 
     /**
+     * Qué puede apagarse de una celda, **en el orden en que se recorre** (21/08/2026, a
+     * petición). La celda acumuló cinco cifras y no todo el mundo mira las mismas: quien
+     * revisa la operativa quiere la ocupación y el reparto, y a quien mira el dinero le
+     * sobran. Apagarlas es de la persona que mira, no del dato.
+     *
+     * **El aviso de incidencias va en la lista aunque no sea una cifra**: comparte la primera
+     * línea con la ocupación y es lo que más pesa visualmente de la tabla —treinta triángulos
+     * ámbar—, así que quien viene a mirar dinero también quiere poder apagarlo. Va el segundo
+     * porque es donde se lee, a la derecha del porcentaje.
+     */
+    public const VALORES = [
+        'usage' => 'Ocupación',
+        'incidents' => 'Aviso de incidencias',
+        'split' => 'Reparto suya · ajena',
+        'profitability' => 'Rentabilidad',
+        'revenue' => 'Ganancia',
+        'cost' => 'Coste',
+    ];
+
+    /**
+     * Lo que está **apagado**, separado por comas, y no lo que está encendido.
+     *
+     * Es lo que hace que el caso normal —verlo todo— sea la cadena vacía, y con `except: ''`
+     * la URL quede limpia. Y es lo que hace que una cifra que se añada mañana aparezca sola:
+     * guardando los encendidos, quien tuviera un enlace de hoy no la vería nunca y lo leería
+     * como que falta un dato, no como una preferencia suya de hace meses.
+     */
+    #[Url(as: 'sin', except: '')]
+    public string $hidden = '';
+
+    /**
+     * Apaga o enciende un valor.
+     *
+     * Se guarda **en el orden del catálogo** y descartando lo que no existe: así dos personas
+     * que apagan lo mismo acaban con la misma URL, y un `?sin=loquesea` tecleado a mano no
+     * deja la pantalla en un estado que el código no espera.
+     */
+    public function toggle(string $valor): void
+    {
+        if (! array_key_exists($valor, self::VALORES)) {
+            return;
+        }
+
+        $apagados = in_array($valor, $this->hiddenKeys(), true)
+            ? array_diff($this->hiddenKeys(), [$valor])
+            : [...$this->hiddenKeys(), $valor];
+
+        $this->hidden = implode(',', array_keys(array_intersect_key(
+            self::VALORES,
+            array_flip($apagados),
+        )));
+    }
+
+    /** Lo apagado, ya limpio de claves inventadas. */
+    private function hiddenKeys(): array
+    {
+        return array_values(array_intersect(
+            array_filter(array_map('trim', explode(',', $this->hidden))),
+            array_keys(self::VALORES),
+        ));
+    }
+
+    /** Y lo que queda encendido, en el orden en que se pinta. */
+    private function shownKeys(): array
+    {
+        return array_values(array_diff(array_keys(self::VALORES), $this->hiddenKeys()));
+    }
+
+    /**
      * La celda cuyo desglose está abierto: la UT y el día.
      *
      * Se guarda el nombre copiado —el mismo con el que se agrupa la tabla— y no
@@ -167,6 +236,16 @@ new #[Layout('components.layouts.app')] class extends Component
                 $suyos = collect($celda->rutas)->filter(fn (int $ruta) => isset($delDia[$ruta]));
                 $fijo = $suyos->isEmpty() ? null : (float) $suyos->sum(fn (int $ruta) => $delDia[$ruta]);
 
+                // Lo que costó el día y lo que quedó después de pagarlo. Se calculan aquí y no
+                // al pintar porque la celda enseña las dos cosas y el diálogo repite la cuenta:
+                // si cada sitio la hiciera a su manera, acabarían diciendo números distintos
+                // del mismo día.
+                $coste = $fijo === null && $celda->coste_real === null
+                    ? null
+                    : ($fijo ?? 0.0) + ($celda->coste_real ?? 0.0);
+                $ganancia = $celda->ganancia === null ? null : (float) $celda->ganancia;
+                $margen = $ganancia === null || $coste === null ? null : $ganancia - $coste;
+
                 return [$clave => [
                     'volume' => $volumen,
                     'usage' => $ocupacion,
@@ -200,9 +279,20 @@ new #[Layout('components.layouts.app')] class extends Component
                     'fixed' => $fijo,
                     'real' => $celda->coste_real,
                     'costed' => (int) $celda->con_coste,
-                    'cost' => $fijo === null && $celda->coste_real === null
+                    'cost' => $coste,
+
+                    // Y lo que queda de las dos cifras de arriba, que es a lo que se mira la
+                    // semana entera: `(ganancia − coste) / coste`. **Rentabilidad sobre
+                    // coste** —«por cada euro gastado, cuánto gano»—, la misma cuenta y el
+                    // mismo rótulo que el diálogo (§7, fase 13.D), no margen sobre ventas.
+                    //
+                    // Nula si falta cualquiera de los dos lados, y también con el coste a
+                    // cero: ahí la división no existe, y un porcentaje inventado sobre un
+                    // coste que no se sabe sería la cifra más fácil de creer de la pantalla.
+                    'margin' => $margen,
+                    'profitability' => $margen === null || $coste === null || $coste <= 0
                         ? null
-                        : ($fijo ?? 0.0) + ($celda->coste_real ?? 0.0),
+                        : $margen / $coste,
                 ]];
             })->all(),
             'shipments' => $celdas->sum(fn ($c) => (int) $c->envios),
@@ -649,6 +739,10 @@ new #[Layout('components.layouts.app')] class extends Component
             'detalle' => $this->detail($maestro),
             'esLaSemanaEnCurso' => $lunes->isSameDay(Carbon::today()->startOfWeek(Carbon::MONDAY)),
             'hayMaestro' => $maestro->isNotEmpty(),
+
+            // Qué cifras se pintan hoy en la celda, y el catálogo entero para el menú.
+            'ver' => $this->shownKeys(),
+            'valores' => self::VALORES,
         ];
     }
 }; ?>
@@ -667,6 +761,13 @@ new #[Layout('components.layouts.app')] class extends Component
     // Envexpress y un 0,00 € diría que no dejó nada (§3.1). Mismo signo que usa el
     // detalle de la jornada, para que las dos pantallas se lean igual.
     $euros = fn (?float $i) => $i === null ? '—' : number_format($i, 2, ',', '.').' €';
+
+    // La rentabilidad, **siempre con su signo**. El signo no es decoración: en la celda hay
+    // otro porcentaje encima —la ocupación— y es lo que distingue de un vistazo cuál se está
+    // mirando. Dos decimales, los mismos que el diálogo: es la misma cuenta sobre los mismos
+    // datos, y redondearla distinto en cada sitio parecería un descuadre.
+    $rentabilidad = fn (float $r) => ($r >= 0 ? '+' : '−')
+        .number_format(abs($r) * 100, 2, ',', '.').' %';
 
     /*
      * El desglose del coste, que en el atributo no cabría legible. Las dos mitades se dicen
@@ -695,9 +796,51 @@ new #[Layout('components.layouts.app')] class extends Component
 @endphp
 
 <div>
-    <x-ui.page-header title="Calendario de capacidades"
+    <x-ui.page-header title="Calendario de rendimiento"
                       description="Volumen en m³ que movió cada UT, día a día. Sale de las corridas del bot, no del maestro.">
         <x-slot:actions>
+            {{-- Qué cifras se ven en la celda. Un menú y no cinco botones sueltos: se toca
+                 de tarde en tarde y ocuparía la cabecera entera. El contador dice cuántas
+                 hay apagadas para que nadie busque una línea que él mismo escondió hace
+                 una semana y la lea como un dato que falta. --}}
+            <div x-data="{ abierto: false }" @click.outside="abierto = false"
+                 @keydown.escape.stop="abierto = false" class="relative">
+                <x-ui.button variant="secondary" x-on:click="abierto = ! abierto"
+                             ::aria-expanded="abierto" aria-haspopup="true">
+                    Valores
+                    @if (count($ver) < count($valores))
+                        <span class="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-600">
+                            {{ count($ver) }}/{{ count($valores) }}
+                        </span>
+                    @endif
+                    <svg class="size-4 text-slate-400" fill="none" viewBox="0 0 24 24"
+                         stroke-width="2" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                    </svg>
+                </x-ui.button>
+
+                <div x-show="abierto" x-cloak x-transition.opacity.duration.100ms
+                     class="absolute right-0 z-20 mt-2 w-60 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg">
+                    @foreach ($valores as $clave => $rotulo)
+                        <label class="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                            <input type="checkbox" wire:click="toggle('{{ $clave }}')"
+                                   @checked(in_array($clave, $ver, true))
+                                   class="size-4 shrink-0 rounded border-slate-300 text-brand-500 focus:ring-brand-500">
+                            {{ $rotulo }}
+                        </label>
+                    @endforeach
+
+                    {{-- Apagarlo todo es una elección válida —quedan el aviso de incidencias
+                         y el acceso al detalle—, pero conviene poder deshacerla de un golpe. --}}
+                    @if (count($ver) < count($valores))
+                        <button type="button" wire:click="$set('hidden', '')"
+                                class="mt-1 w-full cursor-pointer rounded-md border-t border-slate-100 px-2 py-1.5 text-left text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700">
+                            Volver a verlo todo
+                        </button>
+                    @endif
+                </div>
+            </div>
+
             @unless ($esLaSemanaEnCurso)
                 <x-ui.button variant="secondary" wire:click="thisWeek">Esta semana</x-ui.button>
             @endunless
@@ -755,10 +898,25 @@ new #[Layout('components.layouts.app')] class extends Component
             <x-ui.empty-state title="Todavía no hay UT"
                               description="Da de alta la primera en el maestro y aquí saldrá su semana." />
         @else
-            <div class="overflow-x-auto">
+            {{-- La cabecera de días se queda fija al bajar por las UT: con treinta
+                 filas, a media tabla ya no se sabe qué columna es qué día.
+
+                 Para eso el scroll vertical tiene que pasar **aquí dentro** y no en
+                 la página: `sticky` se ancla a la caja que scrollea, y esta ya lo
+                 era —el `overflow-x-auto` que la semana necesita para caber en el
+                 ancho—, así que anclarla a la ventana no era una opción. De ahí el
+                 `max-h`: descuenta la cabecera de la aplicación y el selector de
+                 semana, que quedan por encima. --}}
+            <div class="max-h-[calc(100dvh-12rem)] overflow-x-auto overflow-y-auto">
                 <table class="w-full min-w-6xl text-sm">
                     <thead>
-                        <tr class="border-b border-slate-200 text-left text-xs tracking-wider text-slate-500 uppercase">
+                        {{-- La línea de abajo va como sombra interior en cada celda y no
+                             como `border` de la fila: con `border-collapse` el borde es de
+                             la tabla, se queda pegado al sitio y la cabecera fija lo deja
+                             atrás en cuanto se scrollea. --}}
+                        <tr class="text-left text-xs tracking-wider text-slate-500 uppercase
+                                   [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-white
+                                   [&>th]:shadow-[inset_0_-1px_0_var(--color-slate-200)]">
                             <th class="px-6 py-3 font-semibold">UT</th>
                             <th class="px-4 py-3 text-right font-semibold">Capacidad</th>
 
@@ -842,35 +1000,50 @@ new #[Layout('components.layouts.app')] class extends Component
                                                          qué paquetes sale, con los volúmenes y la
                                                          cobertura del día. El guion también, porque sin
                                                          capacidad declarada esa celda no tiene otra
-                                                         forma de contar lo que movió. --}}
+                                                         forma de contar lo que movió.
+
+                                                         **El botón se queda aunque se apague la
+                                                         ocupación**, y entonces dice «Ver»: es la única
+                                                         puerta al detalle, y esconder una cifra no puede
+                                                         dejar la celda sin ella. --}}
+                                                    @php $veOcupacion = in_array('usage', $ver, true); @endphp
+
                                                     <button type="button"
                                                             wire:click="openDetail(@js($row['key']), '{{ $dia->toDateString() }}')"
                                                             title="{{ $celda['usage'] === null
                                                                 ? 'Esta UT no tiene capacidad declarada: ver de qué paquetes sale el día'
                                                                 : 'Ver de qué paquetes sale este '.$ocupacion($celda['usage']) }}"
                                                             @class([
-                                                                'cursor-pointer font-semibold whitespace-nowrap underline-offset-4 hover:underline',
-                                                                'text-slate-300' => $celda['usage'] === null,
-                                                                'text-shell-900' => $celda['usage'] !== null && $color === null,
+                                                                'cursor-pointer whitespace-nowrap underline-offset-4 hover:underline',
+                                                                'font-semibold' => $veOcupacion,
+                                                                'text-xs text-slate-400 hover:text-slate-600' => ! $veOcupacion,
+                                                                'text-slate-300' => $veOcupacion && $celda['usage'] === null,
+                                                                'text-shell-900' => $veOcupacion && $celda['usage'] !== null && $color === null,
                                                             ])
-                                                            @style(['color: '.$color => $celda['usage'] !== null && $color !== null])>
-                                                        {{ $celda['usage'] === null ? '—' : $ocupacion($celda['usage']) }}
+                                                            @style(['color: '.$color => $veOcupacion && $celda['usage'] !== null && $color !== null])>
+                                                        @if (! $veOcupacion)
+                                                            Ver
+                                                        @else
+                                                            {{ $celda['usage'] === null ? '—' : $ocupacion($celda['usage']) }}
 
-                                                        {{-- Que no cupiera en la furgoneta ya no puede
-                                                             decirlo el color —lo elige el cliente, y un
-                                                             125 % cae en el tramo bueno—, así que lo
-                                                             dice esta marca. --}}
-                                                        @if ($pasada)
-                                                            <span class="align-middle text-amber-500"
-                                                                  title="Se pasa de la capacidad declarada">▲</span>
+                                                            {{-- Que no cupiera en la furgoneta ya no puede
+                                                                 decirlo el color —lo elige el cliente, y un
+                                                                 125 % cae en el tramo bueno—, así que lo
+                                                                 dice esta marca. --}}
+                                                            @if ($pasada)
+                                                                <span class="align-middle text-amber-500"
+                                                                      title="Se pasa de la capacidad declarada">▲</span>
+                                                            @endif
                                                         @endif
                                                     </button>
 
                                                     {{-- A las incidencias de esa ruta ese día, con sus
                                                          rutas abiertas y resaltadas. En ámbar cuando
                                                          hubo paquetes fuera de su ruta y en gris cuando
-                                                         no: el icono está siempre, pero sólo llama la
-                                                         atención si hay algo que mirar. --}}
+                                                         no: mientras esté encendido el icono está en
+                                                         todas las celdas, pero sólo llama la atención
+                                                         si hay algo que mirar. --}}
+                                                    @if (in_array('incidents', $ver, true))
                                                     <a href="{{ $enlace }}" wire:navigate
                                                        @class([
                                                            'shrink-0 transition',
@@ -887,6 +1060,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                                                   d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
                                                         </svg>
                                                     </a>
+                                                    @endif
                                                 </div>
 
                                                 {{-- El reparto, en pequeño: lo que pasó con su ruta
@@ -894,10 +1068,33 @@ new #[Layout('components.layouts.app')] class extends Component
                                                      segundo es el que se mira; va en ámbar sólo
                                                      cuando existe, para que un día limpio no lleve
                                                      un color de aviso. --}}
-                                                @if ($celda['own'] !== null)
+                                                @if (in_array('split', $ver, true) && $celda['own'] !== null)
                                                     <span class="text-xs whitespace-nowrap text-slate-400"
                                                           title="{{ $ocupacion($celda['own']) }} del volumen pasó con su propia ruta y {{ $ocupacion($celda['foreign']) }} acabó fuera de ella">
                                                         ({{ $ocupacion($celda['own']) }}<span class="text-slate-300"> · </span><span @class(['text-amber-600' => $celda['foreign'] > 0])>{{ $ocupacion($celda['foreign']) }}</span>)
+                                                    </span>
+                                                @endif
+
+                                                {{-- La rentabilidad del día: lo ganado sobre lo
+                                                     gastado. **Va antes que los dos importes de
+                                                     los que sale, y no después** (21/08/2026, a
+                                                     petición): es la respuesta, y los euros de
+                                                     debajo son de dónde viene. Entre paréntesis
+                                                     por lo mismo que el reparto de arriba —es una
+                                                     lectura de otras cifras, no un dato nuevo— y
+                                                     con el color del resultado, verde o rojo.
+                                                     Sólo aparece cuando existen los dos lados;
+                                                     con uno solo la división no dice nada. --}}
+                                                @if (in_array('profitability', $ver, true) && $celda['profitability'] !== null)
+                                                    <span @class([
+                                                        'text-xs font-semibold whitespace-nowrap',
+                                                        'text-emerald-700' => $celda['margin'] >= 0,
+                                                        'text-rose-700' => $celda['margin'] < 0,
+                                                    ])
+                                                          title="Rentabilidad sobre coste: ({{ $euros($celda['revenue']) }} − {{ $euros($celda['cost']) }}) ÷ {{ $euros($celda['cost']) }} × 100. Por cada euro gastado, lo que se ganó — no es margen sobre lo facturado.{{ $celda['priced'] < $celda['shipments'] || $celda['costed'] < $celda['shipments']
+                                                              ? ' Ojo: no todos los envíos traen los dos datos, así que sale sobre lo que se sabe.'
+                                                              : '' }}">
+                                                        ({{ $rentabilidad($celda['profitability']) }})
                                                     </span>
                                                 @endif
 
@@ -909,7 +1106,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                                      La cobertura va en el `title`, que es donde
                                                      cabe: aquí un «52 de 59» al lado del importe
                                                      no se lee en diagonal. --}}
-                                                @if ($celda['revenue'] !== null)
+                                                @if (in_array('revenue', $ver, true) && $celda['revenue'] !== null)
                                                     <span class="text-xs whitespace-nowrap text-slate-500"
                                                           title="{{ $euros($celda['revenue']) }} facturados sin IVA{{ $celda['priced'] < $celda['shipments']
                                                               ? ', sobre '.$celda['priced'].' de '.$celda['shipments'].' envíos: al resto no se le encontró valoración en Envexpress'
@@ -925,7 +1122,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                                      ganancia de arriba, que es la línea que
                                                      se busca primero. El desglose de las dos
                                                      mitades va en el `title`. --}}
-                                                @if ($celda['cost'] !== null)
+                                                @if (in_array('cost', $ver, true) && $celda['cost'] !== null)
                                                     <span class="text-xs whitespace-nowrap text-rose-700/80"
                                                           title="{{ $coste($celda) }}">
                                                         −{{ $euros($celda['cost']) }}
@@ -948,16 +1145,25 @@ new #[Layout('components.layouts.app')] class extends Component
                 tienen la capacidad puesta en el maestro. Entre paréntesis, de dónde sale: <strong>qué
                 parte de ese volumen pasó con su propia ruta y qué parte acabó fuera de ella</strong>
                 —suman el 100 %—, y el triángulo lleva a las incidencias de esa ruta ese día.
-                Debajo, <strong>lo que se facturó por esos paquetes sin IVA</strong>; pasa el ratón
-                por encima para ver sobre cuántos envíos se sumó, porque los que no aparecen en
-                Envexpress no cuentan. Las jornadas anteriores al 19/08/2026 no traían el dato y
-                esa línea no sale. Y en rojo, <strong>lo que costó el día</strong>: el gasto
-                mensual de esa ruta repartido entre los días laborables del mes, más el coste
-                real de sus envíos. El desglose de las dos mitades, también al pasar el ratón.
-                El color de cada porcentaje es el del tramo en que cae —malo, justo o bueno—, según los
+                Debajo, también entre paréntesis, <strong>la rentabilidad del día</strong>: lo que
+                quedó entre lo que costó —«por cada euro gastado, cuánto se ganó»—, en verde si sale
+                a favor y en rojo si no. Lleva siempre su signo para no confundirla con la ocupación
+                de arriba, y no sale si falta alguna de las dos cifras de las que nace, que son
+                justo las dos que vienen debajo: <strong>lo que se facturó por esos paquetes sin
+                IVA</strong> —pasa el ratón por encima para ver sobre cuántos envíos se sumó, porque
+                los que no aparecen en Envexpress no cuentan; las jornadas anteriores al 19/08/2026
+                no traían el dato y esa línea no sale— y, en rojo, <strong>lo que costó el
+                día</strong>: el gasto mensual de esa ruta repartido entre los días laborables del
+                mes, más el coste real de sus envíos. El desglose de las dos mitades, también al
+                pasar el ratón.
+                El color <strong>del porcentaje de ocupación</strong> es el del tramo en que cae
+                —malo, justo o bueno—, según los
                 umbrales y los colores de
                 <a href="{{ route('settings', ['module' => 'capacity-calendar']) }}" wire:navigate
-                   class="font-medium underline underline-offset-2">Configuraciones · Calendario de capacidades</a>.
+                   class="font-medium underline underline-offset-2">Configuraciones · Calendario de rendimiento</a>.
+                <strong>Con «Valores», arriba, se apaga lo que no interese ver</strong>: la elección
+                viaja en el enlace, así que se puede guardar o pasar a alguien. El detalle del día
+                sigue abriéndose aunque se apague todo.
                 <strong>Pulsa un porcentaje</strong> para ver el detalle del día: los volúmenes en m³, los
                 envíos, cuántos de ellos traían volumen y <strong>lo que dejaron sus rutas</strong> —lo
                 facturado sin IVA, partido igual que el volumen, para ver cuánto dinero acabó en otra
@@ -1095,7 +1301,7 @@ new #[Layout('components.layouts.app')] class extends Component
                               title="({{ $euros($detalle['revenue']) }} − {{ $euros($detalle['cost']) }}) ÷ {{ $euros($detalle['cost']) }} × 100. Sobre el coste, no sobre lo facturado.{{ $detalle['priced'] < $detalle['shipments'] || $detalle['costed'] < $detalle['shipments']
                                   ? ' Ojo: no todos los envíos traen los dos datos, así que el porcentaje se calcula sobre lo que se sabe.'
                                   : '' }}">
-                            {{ ($gana ? '+' : '−').number_format(abs($detalle['profitability']) * 100, 2, ',', '.') }} %
+                            {{ $rentabilidad($detalle['profitability']) }}
                         </span>
                     </div>
                 @endif

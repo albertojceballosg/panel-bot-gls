@@ -544,7 +544,7 @@ nombre de un concepto retirado queda libre. **No son un módulo de `settings`** 
 de Configuraciones en el menú — ver la fase 15 de §7.
 
 **`couriers.maximum_volume` es lo que cabe en la furgoneta, en m³.** Añadido el
-13/08/2026, y lo usa el calendario de capacidades (§7, fase 6.E). Misma unidad y misma precisión —`decimal(8,3)`— que `volume_m3` de
+13/08/2026, y lo usa el calendario de rendimiento (§7, fase 6.E). Misma unidad y misma precisión —`decimal(8,3)`— que `volume_m3` de
 `run_packages` (§3) a propósito: contrastar lo que una ruta arrastró contra lo que su
 furgoneta admite tiene que ser una resta, no una conversión. Es nullable, y **nulo significa
 «no se sabe», no «no cabe nada»**, igual que el volumen del envío; por eso la validación
@@ -761,7 +761,7 @@ docker compose logs -f vite
 | 3 | CRUD Livewire de comercios y mensajeros | **Hecha** (12/08/2026) |
 | 4 | Historial de cambios | **Hecha** (12/08/2026), pantalla incluida |
 | 5 | Imagen de producción y despliegue | **Pendiente** — es lo último a propósito |
-| 6 | Cerrar el circuito con el bot: `id` en el maestro, guardar incidencias, pantalla, calendario de capacidades | **Hecha** (13/08/2026) salvo **6.D**, el backfill del `codigo` |
+| 6 | Cerrar el circuito con el bot: `id` en el maestro, guardar incidencias, pantalla, calendario de rendimiento | **Hecha** (13/08/2026) salvo **6.D**, el backfill del `codigo` |
 | 7 | Copias de seguridad | **Hecha** (13/08/2026) |
 | 8 | Usuarios del panel | **Hecha** (14/08/2026) |
 | 9 | Gestionar la incidencia: comentario y «atendida» | **Hecha** (14/08/2026) |
@@ -1244,8 +1244,8 @@ detalle por jornada agrupado por ruta. Ver «La pantalla de incidencias», abajo
 cruce del bot sea exacto y desaparezca el *fuzzy*. Va al final porque es mejora, no requisito.
 **Es lo único de la fase 6 que sigue pendiente.**
 
-**E — Calendario de capacidades.** ✅ **Hecho el 13/08/2026.** Nació de tener el volumen de cada
-paquete guardado (§3.1) y `couriers.maximum_volume` al lado. Ver «Calendario de capacidades»,
+**E — Calendario de rendimiento.** ✅ **Hecho el 13/08/2026.** Nació de tener el volumen de cada
+paquete guardado (§3.1) y `couriers.maximum_volume` al lado. Ver «Calendario de rendimiento»,
 abajo. **Se numeraba 6.D hasta el 17/08/2026**, igual que el backfill: dos cosas distintas con
 la misma letra, y una de ellas hecha y la otra no.
 
@@ -1479,12 +1479,19 @@ Tests de pantalla como los del CRUD, y que fijen las obligaciones, no el maqueta
 - renombrar la ruta después de guardar no cambia lo que muestra la incidencia;
 - la pantalla no dispara una consulta por fila.
 
-#### Calendario de capacidades (fase 6.E) — hecho el 13/08/2026
+#### Calendario de rendimiento (fase 6.E) — hecho el 13/08/2026
 
 `GET /capacity-calendar`, colgando de **Operaciones**. Una tabla por semana: una fila por UT y
 una columna por día. La semana por defecto es la en curso, y el filtro
 va en la query (`?semana=`, el lunes) porque es un filtro con valor por defecto, no otra
 pantalla; se mueve con flechas o eligiendo cualquier día, que salta al lunes de su semana.
+
+**Se llamaba «Calendario de capacidades» hasta el 21/08/2026**, cuando se renombró a
+petición del cliente: lo que la pantalla responde no es cuánto cabe, sino qué rindió cada
+UT. El cambio es sólo del texto de cara al usuario —enlace del menú, título, módulo de
+Configuraciones y de Roles y permisos—. **La ruta, el componente y la clave del permiso
+siguen siendo `capacity-calendar`**: renombrarlas obligaría a migrar los permisos ya
+asignados y rompería los enlaces guardados, a cambio de nada.
 
 Cuatro decisiones que no son de estilo:
 
@@ -1592,8 +1599,53 @@ la pantalla.
 ⚠️ **Un porcentaje esconde su cobertura**, que es el riesgo de esta fila y no de las de arriba:
 un 41,75 % parece cerrado aunque la ganancia se haya sumado sobre 88 envíos de 94 y el coste
 sobre otros tantos que no tienen por qué ser los mismos. Por eso el `title` lo advierte cuando
-falta algún dato, y por eso **la celda de la tabla no lleva porcentaje**: ahí sólo van euros,
-que sí admiten el «88 de 94» al lado.
+falta algún dato.
+
+**Y desde el 21/08/2026 el porcentaje también va en la celda, a petición del cliente.** Esto
+**invierte lo que se decidió el 20/08**, que era dejarlo sólo en el diálogo —«en la celda sólo
+euros, que sí admiten el "88 de 94" al lado»— por el riesgo de arriba. Pesó más la pregunta que
+se hace de verdad: cuál de los cinco días de la semana salió a cuenta, que con sólo los dos
+importes obliga a restar de cabeza treinta veces o a abrir treinta diálogos. La advertencia de
+cobertura no se pierde, baja al `title` de la celda; el riesgo sigue siendo real y quien lea la
+tabla en diagonal no lo verá, que es el precio que se aceptó al pedirlo.
+
+Tres cosas de cómo se pintó, que fija `CapacityCalendarTest`:
+
+- **La misma cuenta, en un solo sitio.** La celda y el diálogo salen de agregados distintos
+  —uno por semana, otro por día abierto— pero calculan el margen igual y **dan formato con el
+  mismo ayudante** (`$rentabilidad`). Un test compara las dos cifras del mismo día: si alguien
+  redondease distinto en un lado, la pantalla se contradiría a sí misma.
+- **Siempre con signo** —«+41,75 %»—, porque encima, en la misma celda, ya hay otro porcentaje:
+  la ocupación. El signo es lo que distingue de un vistazo cuál se está mirando.
+- **Va la tercera, encima de los dos importes de los que sale, y entre paréntesis** (pedido ese
+  mismo día, después de verla debajo del coste). La celda queda así: ocupación, reparto,
+  rentabilidad, ganancia, coste — **la respuesta primero y de dónde sale debajo**. Los
+  paréntesis la emparejan con el reparto de arriba, que es la otra línea que no aporta un dato
+  nuevo sino una lectura de los que ya están.
+- **El color es el del resultado** —verde o rojo—, y no el del tramo configurado. El de la
+  ocupación sigue saliendo de los umbrales de Configuraciones; son dos porcentajes con dos
+  escalas y el texto del pie lo dice para que nadie lea el uno con la regla del otro.
+
+**Qué se ve en la celda lo elige quien mira** (21/08/2026, a petición). La celda acabó con
+cinco cifras y no todo el mundo mira las mismas: quien revisa la operativa quiere la ocupación y
+el reparto, y a quien mira el dinero le sobran. Un menú «Valores» en la cabecera las apaga y las
+enciende una a una. **El aviso de incidencias entra en la lista aunque no sea una cifra**: son
+treinta triángulos ámbar y es lo que más pesa visualmente de la tabla, así que quien viene a
+mirar dinero también quiere poder apagarlo.
+
+- **Vive en la query (`?sin=`), como el filtro de semana**, y no en Configuraciones ni por
+  usuario: es «de momento no quiero ver esto», no una decisión de la empresa. Se comparte
+  pegando el enlace, y el panel no tiene —ni necesita para esto— dónde guardar preferencias de
+  una persona.
+- **Lo que se guarda es lo apagado, no lo encendido.** Así el caso normal —verlo todo— deja el
+  enlace limpio, que es para lo que está el `except: ''`. Y sobre todo: una cifra que se añada
+  mañana le aparece a todo el mundo, en vez de quedar invisible para quien tenga guardado un
+  enlace de hoy y leerse como un dato que falta. Se ordena por el catálogo y se descartan las
+  claves inventadas, para que dos personas que apaguen lo mismo acaben con la misma URL.
+- **Apagar la ocupación no deja la celda sin puerta.** Ese porcentaje es el botón que abre el
+  desglose del día, así que cuando se apaga el botón se queda y pasa a decir «Ver». Apagarlo
+  todo es válido y deja **sólo esa puerta**: es lo único de la celda que no es un dato del día
+  sino la forma de salir de ella, y sin ella una celda apagada del todo sería un hueco muerto.
 
 **El neto en m³ salió de la celda ese mismo día, a petición.** Estuvo en la misma línea que el
 porcentaje hasta el 17/08/2026 —competían—, debajo y en pequeño hasta el 18/08, y ahora vive
@@ -2002,7 +2054,7 @@ es parte de lo que la pantalla dice mientras está abierta y no puede desaparece
 
 `GET /settings/{module}`, en un bloque **Configuraciones** de la barra lateral con un hijo por
 módulo configurable. Son los parámetros con los que trabaja otra pantalla: umbrales, colores y
-lo que venga. Hoy sólo está el **calendario de capacidades**, que **la lee desde el
+lo que venga. Hoy sólo está el **calendario de rendimiento**, que **la lee desde el
 17/08/2026**: la fase entregó la configuración y el efecto llegó después (ver más abajo).
 
 La pantalla de configuración lo avisaba con un `x-ui.alert`, retirado el mismo día a petición;
@@ -2052,7 +2104,7 @@ Dos cosas que no son de estilo:
 
 `ui/alert` estrena el tipo `warning` —ni éxito ni fallo: algo que atender, donde el rojo diría
 que se ha roto algo y no es verdad—. `AuditPresenter` aprende el módulo «Configuraciones»; el nombre de cada fila lo da un accesor
-`Setting::name` —«Calendario de capacidades · Porcentaje mínimo»— porque, sin él, el historial
+`Setting::name` —«Calendario de rendimiento · Porcentaje mínimo»— porque, sin él, el historial
 diría «#7». `ui/nav-sublink` aprende a llevar parámetros de ruta y a marcarse activo sólo con
 los suyos: si no, todas las configuraciones se encenderían a la vez.
 
@@ -2067,7 +2119,7 @@ decisiones:
 
 2. **El día que no llega al mínimo lo dice sólo el color.** El 17/08/2026 llevó además un icono
    de alerta delante de la cifra, y **el 18/08/2026 se quitó a petición**: en su sitio, pulsar
-   el porcentaje abre el desglose de la celda (ver «Calendario de capacidades»). El parámetro
+   el porcentaje abre el desglose de la celda (ver «Calendario de rendimiento»). El parámetro
    sigue igual y es el que decide el tramo malo: es el `minimum_percent` que la fase 11 ya
    guardaba, renombrado a **«Porcentaje mínimo de carga»** para que se lea como lo que es. Se
    reutilizó en vez de añadir un segundo umbral porque un «mínimo de carga» aparte del «mínimo»
@@ -2321,7 +2373,7 @@ Dónde quedó cada una:
   listado —`Código · Comercio · Hora cinta · Apunta a · Ganancia`—. Un envío sin valoración es
   **«—», no «0,00 €»**: en una fila suelta el cero se lee como un envío que no se cobró, que
   es peor mentira que en un total.
-- **En el desglose de una celda del calendario de capacidades** (19/08/2026, a petición del
+- **En el desglose de una celda del calendario de rendimiento** (19/08/2026, a petición del
   cliente): «Ganancia de sus rutas» bajo la ocupación, y el importe de cada parte —«De su
   ruta» y «Fuera de su ruta»— en una columna junto al porcentaje del volumen: *«98 % del
   volumen · 134,18 € de ganancia neta»*. **En euros y no en porcentaje**, decidido por el
@@ -2352,7 +2404,7 @@ agregado de `balance()` —tres `selectRaw` más en la consulta que ya se hacía
 colección de paquetes: esa cifra se pinta **fuera** de la isla del listado, y leerla de la
 colección habría vuelto a cargar las ~650 filas del día en cada clic, que es exactamente lo
 que esta pantalla dejó de hacer. Y el par suma/cuenta viaja siempre junto, con la forma que ya
-usaba el calendario de capacidades: `sum(net_revenue)` con `count(net_revenue)` al lado, que
+usaba el calendario de rendimiento: `sum(net_revenue)` con `count(net_revenue)` al lado, que
 no cuenta los nulos y es el denominador honesto. Nueve tests en `IncidentRunScreenTest` fijan
 las dos reglas, el «sin dato», el «—» de una fila sin valoración —en las dos tablas—, el
 código en la fila y que una jornada anterior a la v4 no pinta ni un euro; otros seis en
@@ -2412,7 +2464,7 @@ envíos sin ruta, que no viajan en `paquetes[]`. Si una pantalla acaba rotulando
 
 **Una corrección a lo que decía esta fase antes de hacerse:** hablaba de poner la ganancia
 «junto a los paquetes y el volumen que ya se pintan» en el detalle de la jornada. **El volumen
-no se pinta ahí**: vive en el calendario de capacidades (fase 6.E) y esta pantalla nunca lo ha
+no se pinta ahí**: vive en el calendario de rendimiento (fase 6.E) y esta pantalla nunca lo ha
 enseñado. La ganancia va junto al recuento de paquetes, y sola.
 
 **Decisión abierta:** si la rentabilidad merece pantalla propia —por ruta y por comercio, con
@@ -2603,7 +2655,7 @@ permisos— y `ExpensesCrudTest`, 33 más para el catálogo.
       «atendida», ver §7 fase 9. Se quedó en esas dos y no en «revisada / comentada / asignada»:
       asignar no tiene a quién —son ~5 usuarios que miran la misma pantalla— y tres estados que
       nadie sabe distinguir se rellenan al azar.
-- [x] **Conectar el calendario de capacidades con su configuración** (§7, fase 11). Hecho el
+- [x] **Conectar el calendario de rendimiento con su configuración** (§7, fase 11). Hecho el
       17/08/2026: la ocupación se pinta con el color de su tramo. La duda que quedaba anotada
       aquí —si el color del tramo sustituía al rojo del «se pasa de la capacidad»— se cerró en
       que **conviven**: el exceso pasó a ser una marca ▲ y el color queda para el tramo. El

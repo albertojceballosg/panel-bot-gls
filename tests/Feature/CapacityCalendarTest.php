@@ -1182,6 +1182,11 @@ class CapacityCalendarTest extends TestCase
             ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
             ->html();
 
+        // Y sólo desde donde empieza la tarjeta: la tabla que queda encima nombra las mismas
+        // cifras en los `title` de sus celdas —«Rentabilidad sobre coste…»— y buscarlas en la
+        // página entera encontraría el rótulo de otra pantalla dentro de la misma.
+        $html = mb_substr($html, (int) mb_strpos($html, 'Ganancia de sus rutas'));
+
         $posiciones = collect(['Ganancia de sus rutas', 'Coste del día', 'Rentabilidad', 'Ocupación del día', 'De su ruta'])
             ->map(function (string $rotulo) use ($html) {
                 $donde = mb_strpos($html, $rotulo);
@@ -1214,9 +1219,16 @@ class CapacityCalendarTest extends TestCase
         $this->assertNull($detalle['margin']);
         $this->assertNull($detalle['profitability']);
 
-        Livewire::test('capacity-calendar')
+        // Sobre la tarjeta y no sobre la página: el menú de «Valores» de la cabecera nombra
+        // la rentabilidad para poder apagarla, y ese rótulo no dice nada de esta jornada.
+        $html = Livewire::test('capacity-calendar')
             ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
-            ->assertDontSee('Rentabilidad');
+            ->html();
+
+        $this->assertStringNotContainsString(
+            'Rentabilidad',
+            mb_substr($html, (int) mb_strpos($html, 'Ganancia de sus rutas')),
+        );
     }
 
     /** Y sin ganancia tampoco: restarle el coste a lo que no se sabe no da un margen. */
@@ -1227,6 +1239,254 @@ class CapacityCalendarTest extends TestCase
         $this->assertNull($detalle['revenue']);
         $this->assertNull($detalle['margin']);
         $this->assertNull($detalle['profitability']);
+    }
+
+    // --- La rentabilidad en la celda (21/08/2026, a petición del cliente) -------------
+
+    /** La celda del día tal y como la lee la tabla, sin abrir el diálogo. */
+    private function celdaDelLunes(): array
+    {
+        return $this->fila(Livewire::test('capacity-calendar'), 'Freddy GLS')
+            ['days'][$this->lunes->toDateString()];
+    }
+
+    /**
+     * La misma cuenta que el diálogo, pero en la celda: hasta ahora había que abrir día a día
+     * para saber cuál salió a cuenta, y la pregunta se hace sobre la semana entera.
+     */
+    public function test_the_cell_carries_the_profitability_of_the_day(): void
+    {
+        $this->diaCon('150.00', '420.00', '80.00');
+
+        $celda = $this->celdaDelLunes();
+
+        $this->assertSame(100.0, round($celda['cost'], 2));
+        $this->assertSame(50.0, round($celda['margin'], 2));
+        $this->assertSame(0.5, round($celda['profitability'], 4));
+    }
+
+    /**
+     * **Y dice exactamente lo mismo que el diálogo del mismo día.** Son dos sitios pintando
+     * una cuenta que se hace dos veces; si se separasen, la pantalla se contradiría a sí misma
+     * y no habría forma de saber cuál de las dos cifras creer.
+     */
+    public function test_the_cell_and_the_dialog_agree_on_the_number(): void
+    {
+        $detalle = $this->diaCon('150.00', '420.00', '80.00');
+        $celda = $this->celdaDelLunes();
+
+        $this->assertSame(
+            round($detalle['profitability'], 6),
+            round($celda['profitability'], 6),
+        );
+
+        Livewire::test('capacity-calendar')->assertSee('(+50,00 %)');
+    }
+
+    /** Con el signo puesto siempre: encima, en la misma celda, hay otro porcentaje. */
+    public function test_a_losing_day_shows_its_profitability_in_negative(): void
+    {
+        $this->diaCon('80.00', '420.00', '80.00');
+
+        $this->assertSame(-0.2, round($this->celdaDelLunes()['profitability'], 4));
+
+        Livewire::test('capacity-calendar')->assertSee('(−20,00 %)');
+    }
+
+    /**
+     * **Va tercera, encima de los dos importes de los que sale** (21/08/2026, a petición): la
+     * celda se lee de la respuesta a los datos, no al revés. Y entre paréntesis, como el
+     * reparto de arriba: las dos son lecturas de otras cifras, no cifras nuevas.
+     */
+    public function test_the_profitability_goes_above_the_two_amounts_it_comes_from(): void
+    {
+        $this->diaCon('150.00', '420.00', '80.00');
+
+        // Sin los `title`: el de la rentabilidad lleva dentro la cuenta desarrollada —«(150,00 €
+        // − 100,00 €) ÷ …»— y buscarlos sobre el HTML crudo encontraría los importes dentro del
+        // atributo, antes que las líneas que de verdad los pintan.
+        $html = preg_replace('/title="[^"]*"/', '', Livewire::test('capacity-calendar')->html());
+
+        $rentabilidad = mb_strpos($html, '(+50,00 %)');
+        $ganancia = mb_strpos($html, '150,00 €');
+        $coste = mb_strpos($html, '−100,00 €');
+
+        $this->assertNotFalse($rentabilidad);
+        $this->assertNotFalse($ganancia);
+        $this->assertNotFalse($coste);
+
+        $this->assertLessThan($ganancia, $rentabilidad);
+        $this->assertLessThan($coste, $ganancia);
+    }
+
+    /** Sin las dos cifras de las que nace, la celda no la pinta: no hay nada que dividir. */
+    public function test_a_cell_without_a_cost_has_no_profitability(): void
+    {
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0]);
+        $this->package($this->runOn($this->lunes), 'Freddy GLS', 4.0, ['net_revenue' => 150.00]);
+
+        $celda = $this->celdaDelLunes();
+
+        $this->assertNull($celda['cost']);
+        $this->assertNull($celda['margin']);
+        $this->assertNull($celda['profitability']);
+    }
+
+    // --- Qué se ve en la celda (21/08/2026, a petición del cliente) ------------------
+
+    /** Un día con las cinco cifras puestas, para poder apagarlas de una en una. */
+    private function diaCompleto(): void
+    {
+        $ruta = PickupRoute::create(['name' => '1']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10, 'pickup_route_id' => $ruta->id]);
+        $this->gastoMensual($ruta, '420.00');
+
+        $run = $this->runOn($this->lunes);
+        $this->package($run, 'Freddy GLS', 4.0, [
+            'assigned_route_id' => $ruta->id, 'net_revenue' => '150.00', 'real_cost' => '80.00',
+        ]);
+        $this->package($run, 'Freddy GLS', 1.0, [
+            'assigned_route_id' => $ruta->id, 'type' => RunPackage::TYPE_OTHER_ROUTE,
+        ]);
+    }
+
+    /** De entrada se ve todo: apagar es una decisión, y la pantalla no la toma sola. */
+    public function test_by_default_the_cell_shows_every_value(): void
+    {
+        $this->diaCompleto();
+
+        // La lista, literal: el componente es una clase anónima y no hay constante que
+        // importar, así que el orden en que se pintan las cinco cifras queda fijado aquí.
+        Livewire::test('capacity-calendar')
+            ->assertViewHas('ver', ['usage', 'incidents', 'split', 'profitability', 'revenue', 'cost'])
+            ->assertSet('hidden', '');
+    }
+
+    /** Apagar una cifra la quita de la celda y deja las demás donde estaban. */
+    public function test_switching_a_value_off_takes_it_out_of_the_cell(): void
+    {
+        $this->diaCompleto();
+
+        $componente = Livewire::test('capacity-calendar')->call('toggle', 'profitability');
+
+        $componente->assertSet('hidden', 'profitability');
+
+        $html = preg_replace('/title="[^"]*"/', '', $componente->html());
+
+        // La rentabilidad se fue; la ganancia y el coste siguen.
+        $this->assertStringNotContainsString('(+50,00 %)', $html);
+        $this->assertStringContainsString('150,00 €', $html);
+        $this->assertStringContainsString('−100,00 €', $html);
+    }
+
+    /** Y volver a pulsarla la devuelve: el menú es un interruptor, no un camino de ida. */
+    public function test_switching_it_on_again_brings_it_back(): void
+    {
+        $this->diaCompleto();
+
+        Livewire::test('capacity-calendar')
+            ->call('toggle', 'profitability')
+            ->call('toggle', 'profitability')
+            ->assertSet('hidden', '')
+            ->assertSee('(+50,00 %)');
+    }
+
+    /**
+     * **Lo que viaja en la URL es lo apagado, no lo encendido.** Así el caso normal deja el
+     * enlace limpio, y una cifra que se añada mañana le aparece a todo el mundo en vez de
+     * quedar invisible para quien tenga guardado un enlace de hoy.
+     */
+    public function test_the_url_carries_what_is_switched_off(): void
+    {
+        $this->diaCompleto();
+
+        Livewire::withQueryParams(['sin' => 'usage,cost'])
+            ->test('capacity-calendar')
+            ->assertViewHas('ver', ['incidents', 'split', 'profitability', 'revenue']);
+    }
+
+    /** El orden de la URL es el del catálogo, no el de los clics: dos personas, un enlace. */
+    public function test_the_order_in_the_url_does_not_depend_on_the_clicks(): void
+    {
+        $this->diaCompleto();
+
+        Livewire::test('capacity-calendar')
+            ->call('toggle', 'cost')
+            ->call('toggle', 'usage')
+            ->assertSet('hidden', 'usage,cost');
+    }
+
+    /** Un `?sin=` tecleado a mano con algo que no existe no rompe nada: se descarta. */
+    public function test_an_invented_value_in_the_url_is_ignored(): void
+    {
+        $this->diaCompleto();
+
+        Livewire::withQueryParams(['sin' => 'loquesea,cost'])
+            ->test('capacity-calendar')
+            ->assertViewHas('ver', ['usage', 'incidents', 'split', 'profitability', 'revenue'])
+            ->assertOk();
+    }
+
+    /**
+     * **Apagar la ocupación no puede dejar la celda sin puerta al detalle**: el botón sigue
+     * ahí y pasa a decir «Ver». Es la única forma de abrir el desglose de un día.
+     */
+    public function test_the_detail_is_still_reachable_without_the_occupancy(): void
+    {
+        $this->diaCompleto();
+
+        Livewire::test('capacity-calendar')
+            ->call('toggle', 'usage')
+            ->assertDontSee('40 %')
+            ->assertSee('Ver')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertSee('Ocupación del día');
+    }
+
+    /**
+     * El aviso de incidencias también se apaga (21/08/2026, a petición): son treinta triángulos
+     * ámbar y es lo que más pesa de la tabla para quien viene a mirar dinero.
+     */
+    public function test_the_incidents_icon_can_be_switched_off(): void
+    {
+        $this->diaCompleto();
+
+        $enlace = route('incident-run', ['date' => $this->lunes->toDateString(), 'ut' => 'Freddy GLS']);
+
+        $componente = Livewire::test('capacity-calendar');
+        $this->assertStringContainsString($enlace, $componente->html());
+
+        $componente->call('toggle', 'incidents');
+
+        $this->assertStringNotContainsString($enlace, $componente->html());
+    }
+
+    /**
+     * Y apagarlo todo es una elección válida. **Queda la puerta al detalle y nada más**: lo
+     * demás son datos del día, y quien los apaga los apaga a sabiendas.
+     */
+    public function test_everything_can_be_switched_off(): void
+    {
+        $this->diaCompleto();
+
+        $componente = Livewire::withQueryParams(
+            ['sin' => 'usage,incidents,split,profitability,revenue,cost']
+        )->test('capacity-calendar');
+
+        $componente->assertViewHas('ver', [])->assertOk();
+
+        $html = preg_replace('/title="[^"]*"/', '', $componente->html());
+
+        $this->assertStringNotContainsString('150,00 €', $html);
+        $this->assertStringNotContainsString(
+            route('incident-run', ['date' => $this->lunes->toDateString(), 'ut' => 'Freddy GLS']),
+            $html,
+        );
+
+        // La puerta sigue: sin ella, un día apagado del todo sería una celda muerta.
+        $componente->assertSee('Ver')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertSee('Ocupación del día');
     }
 
     /**
