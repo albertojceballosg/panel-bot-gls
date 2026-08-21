@@ -179,10 +179,10 @@ Hay dos:
 | `semiancho_min` | La ventana de atribución, en minutos a cada lado del pico de descarga de una ruta. | ±10 | entero **> 0**, sin tope |
 | `dias_atras_ganancia` | Cuántos días **hacia atrás** pide el bot en Envexpress, además del día que analiza, para encontrar la ganancia de cada envío. | 3 | entero **de 0 a 30** |
 
-`dias_atras_ganancia` es de la fase 14 y **este panel ya lo sirve desde el 19/08/2026**
-—módulo «Rentabilidad» en Configuraciones—, aunque **el bot todavía no lo lee**: hasta que lo
-haga, corre con su 3. No comparte todas las reglas del primero, aunque viaje por el mismo
-sitio:
+`dias_atras_ganancia` es de la fase 14 y **está hecho en los dos lados desde el 19/08/2026**:
+aquí lo sirve el módulo «Rentabilidad» de Configuraciones, y el bot lo lee (su `CONTEXT.md`
+§13.11). Sin configurar, la clave se omite y el bot corre con su 3. No comparte todas las
+reglas del primero, aunque viaje por el mismo sitio:
 
 - **El cero es válido** y significa «sólo el día que se analiza». En `semiancho_min` un cero
   sería una ventana que no contiene nada; aquí es una opción legítima.
@@ -2764,12 +2764,14 @@ permisos— y `ExpensesCrudTest`, 33 más para el catálogo.
       «Ganancia de las rutas» y avisa de que deja fuera los envíos sin ruta—, y hay un test que
       lo fija, así que esto es un pendiente del contrato y no de la interfaz. El bot sí lo tiene resuelto en su listado en
       texto, con una fila `(sin ruta)` aparte.
-- [ ] **La ventana de días de la ganancia (fase 14).** **Hecha en este repo** el 19/08/2026:
-      módulo «Rentabilidad» en Configuraciones y `dias_atras_ganancia` en `GET /api/rutas`,
-      probado con peticiones reales a 0, a 3 y sin configurar. **Queda el bot**, que todavía no
-      lee la clave y corre con su 3 — los cuatro cambios están en su `CONTEXT.md` §13.11.
-      Mientras tanto el ajuste se puede mover y no hace nada, que es lo único que conviene
-      avisarle al cliente. De las dos diferencias con `semiancho_min`, la del tope se resolvió
+- [x] **La ventana de días de la ganancia (fase 14).** **Hecha en los dos lados** el
+      19/08/2026: aquí, el módulo «Rentabilidad» en Configuraciones y `dias_atras_ganancia` en
+      `GET /api/rutas`, probado con peticiones reales a 0, a 3 y sin configurar; y en el bot,
+      las cuatro piezas de su `CONTEXT.md` §13.11.
+      **Este punto decía que el bot no leía la clave todavía, y era falso desde el mismo
+      19/08/2026** — la tabla de fases de §7 sí lo daba por hecho, así que el documento se
+      contradecía consigo mismo. Corregido el 21/08/2026 leyendo `../bot-gls`, que lo marca
+      hecho con un ✅. De las dos diferencias con `semiancho_min`, la del tope se resolvió
       con un tipo propio (`TYPE_DAYS`) y la del cero resultó no ser un problema: el
       `array_filter` del controlador ya llevaba callback y sólo descartaba nulos. Lo que hay
       ahora es un test que impide que alguien lo quite.
