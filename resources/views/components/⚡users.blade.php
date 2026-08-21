@@ -128,6 +128,11 @@ new #[Layout('components.layouts.app')] class extends Component
      */
     public function delete(int $id): void
     {
+        // El permiso, antes que las dos reglas de abajo: a quien no puede escribir aquí se le
+        // niega, no se le explica cómo tendría que hacerlo. `deleteRecord` lo comprueba también
+        // —es de `CrudScreen`—, pero para entonces ya se habría contestado con un aviso.
+        $this->authorizeManage();
+
         if ($id === auth()->id()) {
             $this->confirmingDeletion = null;
             $this->toastError('No puedes darte de baja a ti mismo. Que lo haga otro usuario.');
@@ -151,6 +156,8 @@ new #[Layout('components.layouts.app')] class extends Component
 
     public function restore(int $id): void
     {
+        $this->authorizeManage();
+
         if (! $this->amAdministrator()
             && User::onlyTrashed()->find($id)?->roleName() === PermissionCatalog::ROLE_ADMIN) {
             $this->toastError('Sólo un Administrador puede reactivar la cuenta de otro Administrador.');

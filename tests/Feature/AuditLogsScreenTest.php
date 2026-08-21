@@ -232,6 +232,20 @@ class AuditLogsScreenTest extends TestCase
             ->assertDontSee('contraseña-larga');
     }
 
+    // --- La puerta (§7, fase 12) ---------------------------------------------
+
+    /**
+     * Sólo la puerta: esta pantalla **no escribe nada**, y por eso su módulo tiene `view` y
+     * no `manage` — el historial no se edita ni se borra nunca (§4). Lo que sí hay que probar
+     * dentro es que no enseñe lo de otros módulos, y eso va más abajo.
+     */
+    public function test_the_screen_is_behind_its_permission(): void
+    {
+        $this->actingAs(User::factory()->withoutRole()->create());
+
+        $this->get('/audit-logs')->assertForbidden();
+    }
+
     // --- Auditoría no es la puerta de atrás de otro módulo -------------------
     //
     // Aquí se lee el volcado entero de cada cambio, así que sin filtrar por

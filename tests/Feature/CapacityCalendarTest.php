@@ -1658,6 +1658,20 @@ class CapacityCalendarTest extends TestCase
         $this->assertSame(0.8, $propio['share']);
     }
 
+    // --- La puerta (§7, fase 12) ---------------------------------------------
+
+    /**
+     * Sólo la puerta, como en Auditoría: el calendario es una lectura de lo que escribe el
+     * bot (§3.1), así que su módulo tampoco tiene `manage`. Lo que se abre desde aquí
+     * —el detalle, el menú de valores— no escribe en ninguna tabla.
+     */
+    public function test_the_screen_is_behind_its_permission(): void
+    {
+        $this->actingAs(User::factory()->withoutRole()->create());
+
+        $this->get('/capacity-calendar')->assertForbidden();
+    }
+
     // --- El dinero pide `expenses.view` ---------------------------------------
     //
     // El coste sale del maestro de gastos (fase 15) y la rentabilidad se calcula con él, así

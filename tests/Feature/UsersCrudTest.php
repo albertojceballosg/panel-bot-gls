@@ -476,6 +476,63 @@ class UsersCrudTest extends TestCase
         $this->assertSame(PermissionCatalog::ROLE_ADMIN, $this->yo->refresh()->roleName());
     }
 
+
+    // --- La puerta y la cerradura (§7, fase 12) ------------------------------
+    //
+    // La ruta deja entrar; a los métodos del componente se llega desde el navegador aunque el
+    // Blade no pinte el botón. Las dos cosas se prueban aquí, en la pantalla, y no sólo en
+    // `RolesAndPermissionsTest`: allí se fija el reparto de roles, y esto es de esta pantalla.
+
+    /** Una cuenta que sólo puede mirar esta pantalla, sin rol de por medio. */
+    private function soloLectura(): User
+    {
+        $usuario = User::factory()->withoutRole()->create();
+        $usuario->givePermissionTo('users.view');
+
+        return $usuario;
+    }
+
+    public function test_the_screen_is_behind_its_permission(): void
+    {
+        $this->actingAs(User::factory()->withoutRole()->create());
+
+        $this->get('/users')->assertForbidden();
+    }
+
+    public function test_a_read_only_account_cannot_write_through_livewire(): void
+    {
+        $otro = User::factory()->role(PermissionCatalog::ROLE_OPERATIONS)->create();
+
+        $this->actingAs($this->soloLectura());
+
+        Livewire::test('users')->call('create')->assertForbidden();
+        Livewire::test('users')->call('edit', $otro->id)->assertForbidden();
+        Livewire::test('users')->call('confirmDelete', $otro->id)->assertForbidden();
+        Livewire::test('users')->call('delete', $otro->id)->assertForbidden();
+        Livewire::test('users')->call('restore', $otro->id)->assertForbidden();
+        Livewire::test('users')->call('save')->assertForbidden();
+
+        $this->assertNotSoftDeleted($otro);
+    }
+
+    /**
+     * Y sobre la cuenta de un Administrador, lo mismo: **un 403 y no el aviso** de que hace
+     * falta ser Administrador. El permiso se comprueba antes que la regla de negocio, porque
+     * a quien no puede escribir aquí no se le explica cómo tendría que hacerlo.
+     */
+    public function test_a_read_only_account_gets_a_403_and_not_the_administrator_notice(): void
+    {
+        $admin = User::factory()->create();
+        $this->actingAs($this->soloLectura());
+
+        Livewire::test('users')->call('edit', $admin->id)->assertForbidden();
+        Livewire::test('users')->call('delete', $admin->id)->assertForbidden();
+
+        $admin->delete();
+        Livewire::test('users')->call('restore', $admin->id)->assertForbidden();
+
+        $this->assertSoftDeleted($admin);
+    }
     // --- Al Administrador sólo lo reparte y lo toca un Administrador ---------
     //
     // Sin estas reglas `users.manage` **es** el rol de Administrador: quien

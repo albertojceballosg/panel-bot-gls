@@ -291,6 +291,32 @@ class SettingsTest extends TestCase
         $this->assertStringContainsString('días', $html);
     }
 
+    // --- La puerta y la cerradura (§7, fase 12) ------------------------------
+
+    public function test_the_screen_is_behind_its_permission(): void
+    {
+        $this->actingAs(User::factory()->withoutRole()->create());
+
+        $this->get($this->url())->assertForbidden();
+    }
+
+    /**
+     * Aquí `view` y `manage` sí se separan de verdad: Operaciones mira los parámetros para
+     * entender por qué una pantalla pinta lo que pinta, y no los toca. Cambiarlos mueve
+     * acusaciones contra personas (§7, fase 11).
+     */
+    public function test_a_read_only_account_cannot_save_through_livewire(): void
+    {
+        $usuario = User::factory()->withoutRole()->create();
+        $usuario->givePermissionTo('settings.view');
+
+        $this->actingAs($usuario);
+
+        $this->rellena()->call('save')->assertForbidden();
+
+        $this->assertSame(0, Setting::count());
+    }
+
     // --- El módulo no se cambia por debajo -----------------------------------
 
     /**

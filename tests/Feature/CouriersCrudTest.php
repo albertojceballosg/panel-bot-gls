@@ -295,6 +295,44 @@ class CouriersCrudTest extends TestCase
             ->assertViewHas('couriers', fn ($p) => $p->count() === 10 && $p->total() === 25);
     }
 
+
+    // --- La puerta y la cerradura (§7, fase 12) ------------------------------
+    //
+    // La ruta deja entrar; a los métodos del componente se llega desde el navegador aunque el
+    // Blade no pinte el botón. Las dos cosas se prueban aquí, en la pantalla, y no sólo en
+    // `RolesAndPermissionsTest`: allí se fija el reparto de roles, y esto es de esta pantalla.
+
+    /** Una cuenta que sólo puede mirar esta pantalla, sin rol de por medio. */
+    private function soloLectura(): User
+    {
+        $usuario = User::factory()->withoutRole()->create();
+        $usuario->givePermissionTo('couriers.view');
+
+        return $usuario;
+    }
+
+    public function test_the_screen_is_behind_its_permission(): void
+    {
+        $this->actingAs(User::factory()->withoutRole()->create());
+
+        $this->get('/couriers')->assertForbidden();
+    }
+
+    public function test_a_read_only_account_cannot_write_through_livewire(): void
+    {
+        $mensajero = Courier::create(['name' => 'Freddy GLS']);
+
+        $this->actingAs($this->soloLectura());
+
+        Livewire::test('couriers')->call('create')->assertForbidden();
+        Livewire::test('couriers')->call('edit', $mensajero->id)->assertForbidden();
+        Livewire::test('couriers')->call('confirmDelete', $mensajero->id)->assertForbidden();
+        Livewire::test('couriers')->call('delete', $mensajero->id)->assertForbidden();
+        Livewire::test('couriers')->call('restore', $mensajero->id)->assertForbidden();
+        Livewire::test('couriers')->call('save')->assertForbidden();
+
+        $this->assertNotSoftDeleted($mensajero);
+    }
     // --- Doble envío ---------------------------------------------------------
 
     public function test_saving_twice_does_not_create_two_couriers(): void

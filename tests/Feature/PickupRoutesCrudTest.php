@@ -365,4 +365,42 @@ class PickupRoutesCrudTest extends TestCase
         $this->assertNotNull($nivel, 'No llegó a crearse la ruta.');
         $this->assertGreaterThan(0, $nivel, 'El guardado corrió fuera de una transacción.');
     }
+
+    // --- La puerta y la cerradura (§7, fase 12) ------------------------------
+    //
+    // La ruta deja entrar; a los métodos del componente se llega desde el navegador aunque el
+    // Blade no pinte el botón. Las dos cosas se prueban aquí, en la pantalla, y no sólo en
+    // `RolesAndPermissionsTest`: allí se fija el reparto de roles, y esto es de esta pantalla.
+
+    /** Una cuenta que sólo puede mirar esta pantalla, sin rol de por medio. */
+    private function soloLectura(): User
+    {
+        $usuario = User::factory()->withoutRole()->create();
+        $usuario->givePermissionTo('pickup-routes.view');
+
+        return $usuario;
+    }
+
+    public function test_the_screen_is_behind_its_permission(): void
+    {
+        $this->actingAs(User::factory()->withoutRole()->create());
+
+        $this->get('/pickup-routes')->assertForbidden();
+    }
+
+    public function test_a_read_only_account_cannot_write_through_livewire(): void
+    {
+        $ruta = PickupRoute::create(['name' => 'Vallecas']);
+
+        $this->actingAs($this->soloLectura());
+
+        Livewire::test('pickup-routes')->call('create')->assertForbidden();
+        Livewire::test('pickup-routes')->call('edit', $ruta->id)->assertForbidden();
+        Livewire::test('pickup-routes')->call('confirmDelete', $ruta->id)->assertForbidden();
+        Livewire::test('pickup-routes')->call('delete', $ruta->id)->assertForbidden();
+        Livewire::test('pickup-routes')->call('restore', $ruta->id)->assertForbidden();
+        Livewire::test('pickup-routes')->call('save')->assertForbidden();
+
+        $this->assertNotSoftDeleted($ruta);
+    }
 }

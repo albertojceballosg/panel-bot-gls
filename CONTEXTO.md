@@ -780,7 +780,7 @@ docker compose logs -f vite
 > Lo único que queda abierto de la 6 a la 11 es **6.D**, el backfill del `codigo`, que es mejora
 > y no requisito (§8).
 
-**La suite son 615 tests** (1.761 aserciones) el 21/08/2026, sobre Postgres. Es la cifra
+**La suite son 626 tests** (1.794 aserciones) el 21/08/2026, sobre Postgres. Es la cifra
 que hay que ver pasar antes de dar cualquier cosa por terminada, no la inspección del código.
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -2748,10 +2748,16 @@ permisos— y `ExpensesCrudTest`, 33 más para el catálogo.
 - [ ] **Lo que dejó abierto el repaso de permisos del 21/08/2026** (§7, fase 12). Los cinco
       hallazgos con los que se podía ver o hacer de más están cerrados; queda lo que no era un
       agujero sino falta de red o de endurecimiento:
-      - **Las pruebas de 403 de seis pantallas**: `users`, `couriers`, `pickup-routes`,
-        `settings`, `audit-logs` y `capacity-calendar`. El patrón está escrito en
-        `RolesAndPermissionsTest` y en `BackupsTest`; es copiarlo. Sin ellas, lo que se acaba
-        de cerrar se puede reabrir sin que nadie se entere.
+      - ✅ **Las pruebas de 403 que faltaban**, hechas el 21/08/2026: `users`, `couriers`,
+        `pickup-routes`, `settings`, `audit-logs` y `capacity-calendar`. **Toda pantalla tiene
+        ya prueba de puerta, y las que escriben la tienen además sobre cada método.** Las dos
+        de sólo lectura —Auditoría y el calendario— llevan sólo la puerta, que es lo que hay
+        que probar donde no se escribe nada.
+        Escribirlas destapó un fallo de orden en Usuarios: las reglas del Administrador corrían
+        **antes** que la comprobación del permiso, así que una cuenta de sólo lectura recibía
+        el aviso «sólo un Administrador puede…» en vez de un 403. La acción se negaba igual,
+        pero la respuesta era la equivocada y le contaba a un extraño cómo tendría que hacerlo.
+        Primero si puedes, después si debes.
       - **La API no tiene *throttle* ni tope de tamaño de payload.** `POST /api/incidencias`
         acepta `paquetes` sin límite y hace un `updateOrCreate` por fila. Ojo al ponerlo: el
         contrato manda la jornada entera (§3.1) y **el tope se ajusta a la jornada, no al
