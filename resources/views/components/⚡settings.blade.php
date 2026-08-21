@@ -8,6 +8,7 @@ use App\Support\PermissionCatalog;
 use App\Support\SettingsCatalog;
 use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Component;
 
 /**
@@ -29,6 +30,15 @@ new #[Layout('components.layouts.app')] class extends Component
 {
     use PreventsDoubleSubmit, SendsToasts;
 
+    /**
+     * Qué módulo se está configurando.
+     *
+     * `#[Locked]` porque **lo valida `mount()` y nadie más**: sin el candado llega del
+     * navegador después de esa comprobación, así que un módulo que no existe en el catálogo
+     * se colaría por detrás del `abort_unless` y `Setting::store()` escribiría filas de un
+     * módulo inventado. Cada módulo es una pantalla distinta, no un filtro.
+     */
+    #[Locked]
     public string $module = '';
 
     /** @var array<string, string> */

@@ -4,9 +4,12 @@ namespace Tests\Feature;
 
 use App\Models\AuditLog;
 use App\Models\Courier;
+use App\Models\Expense;
 use App\Models\Merchant;
 use App\Models\PickupRoute;
 use App\Models\User;
+use App\Support\PermissionCatalog;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -97,8 +100,11 @@ class AuditLogsScreenTest extends TestCase
         Courier::create(['name' => 'Freddy GLS']);
         Merchant::create(['name' => 'Zona Joven', 'pickup_route_id' => $this->tres->id]);
 
+        // El filtro es la clave del módulo y no el nombre de la clase desde el
+        // 21/08/2026: los gastos son dos tablas del mismo módulo y salían dos
+        // veces en el desplegable.
         Livewire::test('audit-logs')
-            ->set('moduleFilter', Courier::class)
+            ->set('moduleFilter', 'couriers')
             ->assertSee('Freddy GLS')
             ->assertDontSee('Zona Joven');
     }
@@ -224,5 +230,85 @@ class AuditLogsScreenTest extends TestCase
             ->assertSee('Otra persona')
             ->assertDontSee('password')
             ->assertDontSee('contraseña-larga');
+    }
+
+    // --- Auditoría no es la puerta de atrás de otro módulo -------------------
+    //
+    // Aquí se lee el volcado entero de cada cambio, así que sin filtrar por
+    // permiso `audit-logs.view` enseña lo que la cuenta no puede ver en su
+    // propia pantalla. El caso real es Operaciones, que tiene el historial y no
+    // tiene ni usuarios ni roles (§7, fase 12).
+
+    /** El rol de fábrica que sí entra a Auditoría y no a Usuarios. */
+    private function operaciones(): User
+    {
+        return User::factory()->role(PermissionCatalog::ROLE_OPERATIONS)->create(['name' => 'De operaciones']);
+    }
+
+    public function test_it_hides_the_changes_of_a_module_the_account_cannot_see(): void
+    {
+        User::create(['name' => 'Otra persona', 'email' => 'otra@panel.local', 'password' => 'contraseña-larga']);
+        Merchant::create(['name' => 'Zona Joven', 'pickup_route_id' => $this->tres->id]);
+
+        $this->actingAs($this->operaciones());
+
+        Livewire::test('audit-logs')
+            // Lo suyo lo sigue viendo.
+            ->assertSee('Zona Joven')
+            // Y lo que no es suyo, no: ni la cuenta ni su correo.
+            ->assertDontSee('Otra persona')
+            ->assertDontSee('otra@panel.local');
+    }
+
+    /** El cambio que más importa esconder: quién le dio el Administrador a quién. */
+    public function test_a_role_change_does_not_leak_through_the_history(): void
+    {
+        $otro = User::factory()->role(PermissionCatalog::ROLE_OPERATIONS)->create(['name' => 'Ascendido']);
+        $otro->recordRoleChange(PermissionCatalog::ROLE_OPERATIONS, PermissionCatalog::ROLE_ADMIN);
+
+        $this->actingAs($this->operaciones());
+
+        Livewire::test('audit-logs')->assertDontSee('Ascendido');
+    }
+
+    public function test_the_module_filter_only_offers_what_the_account_can_see(): void
+    {
+        $this->actingAs($this->operaciones());
+
+        Livewire::test('audit-logs')
+            ->assertViewHas('modules', fn (array $m) => array_key_exists('merchants', $m)
+                && ! array_key_exists('users', $m)
+                && ! array_key_exists('roles', $m));
+    }
+
+    /** El id llega del cliente: pedir el detalle por su número tampoco vale. */
+    public function test_the_detail_of_a_hidden_change_is_not_reachable_by_its_id(): void
+    {
+        $ajena = User::create(['name' => 'Otra persona', 'email' => 'otra@panel.local', 'password' => 'contraseña-larga']);
+        $log = $ajena->auditLogs()->sole();
+
+        $this->actingAs($this->operaciones());
+
+        // Igual que un registro que no existe: en una petición de verdad el
+        // manejador de Laravel lo convierte en 404.
+        $this->expectException(ModelNotFoundException::class);
+
+        Livewire::test('audit-logs')->call('show', $log->id);
+    }
+
+    /** Y el Administrador lo sigue viendo todo, que es de lo que sirve el historial. */
+    public function test_an_administrator_still_sees_every_module(): void
+    {
+        User::create(['name' => 'Otra persona', 'email' => 'otra@panel.local', 'password' => 'contraseña-larga']);
+        $concepto = Expense::create(['name' => 'Gasolina']);
+
+        Livewire::test('audit-logs')
+            ->assertSee('Otra persona')
+            // Y de paso los gastos, que hasta ahora salían con el nombre de la
+            // clase porque el presentador tenía su propia lista a medias.
+            ->assertSee('Gasolina')
+            ->assertSee('Gastos');
+
+        $this->assertSame('expenses', PermissionCatalog::auditables()[$concepto::class]);
     }
 }

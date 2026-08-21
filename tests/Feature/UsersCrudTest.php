@@ -476,6 +476,119 @@ class UsersCrudTest extends TestCase
         $this->assertSame(PermissionCatalog::ROLE_ADMIN, $this->yo->refresh()->roleName());
     }
 
+    // --- Al Administrador sólo lo reparte y lo toca un Administrador ---------
+    //
+    // Sin estas reglas `users.manage` **es** el rol de Administrador: quien
+    // gestiona cuentas se crea una con ese rol —o le cambia la contraseña a la
+    // que ya lo tiene— y sale con las copias, que son la base del cliente (§10).
+    // Hoy sólo el Administrador lleva ese permiso; esto existe porque desde la
+    // fase 12 los roles los crea el cliente.
+
+    /** Una cuenta que gestiona usuarios sin ser Administrador: el rol a medida del cliente. */
+    private function gestorDeCuentas(): User
+    {
+        $usuario = User::factory()->withoutRole()->create(['name' => 'Gestor']);
+        $usuario->givePermissionTo('users.view', 'users.manage');
+
+        return $usuario;
+    }
+
+    public function test_you_cannot_change_your_own_role(): void
+    {
+        // Antes esto sólo cubría **quitarte** el Administrador. El sentido
+        // contrario —ponértelo— es por donde se escalaba.
+        $gestor = $this->gestorDeCuentas();
+        $this->actingAs($gestor);
+
+        Livewire::test('users')
+            ->call('edit', $gestor->id)
+            ->set('role', PermissionCatalog::ROLE_OPERATIONS)
+            ->call('save');
+
+        $this->assertNull($gestor->refresh()->roleName());
+    }
+
+    public function test_only_an_administrator_hands_out_the_administrator_role(): void
+    {
+        $this->actingAs($this->gestorDeCuentas());
+
+        Livewire::test('users')
+            ->call('create')
+            ->set('name', 'Puerta')
+            ->set('last_name', 'Trasera')
+            ->set('email', 'puerta@panel.local')
+            ->set('password', 'una-contraseña-larga')
+            ->set('password_confirmation', 'una-contraseña-larga')
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
+            ->call('save');
+
+        $this->assertNull(User::where('email', 'puerta@panel.local')->first());
+    }
+
+    public function test_only_an_administrator_promotes_someone_to_administrator(): void
+    {
+        $this->actingAs($this->gestorDeCuentas());
+        $otro = User::factory()->role(PermissionCatalog::ROLE_OPERATIONS)->create();
+
+        Livewire::test('users')
+            ->call('edit', $otro->id)
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
+            ->call('save');
+
+        $this->assertSame(PermissionCatalog::ROLE_OPERATIONS, $otro->refresh()->roleName());
+    }
+
+    /** Cambiarle la contraseña a un Administrador es entrar con su cuenta. */
+    public function test_only_an_administrator_edits_another_administrator(): void
+    {
+        $this->actingAs($this->gestorDeCuentas());
+
+        Livewire::test('users')
+            ->call('edit', $this->yo->id)
+            ->set('password', 'la-que-yo-elija')
+            ->set('password_confirmation', 'la-que-yo-elija')
+            ->call('save');
+
+        $this->assertTrue(Hash::check('password', $this->yo->refresh()->password));
+    }
+
+    public function test_only_an_administrator_deletes_or_restores_another_administrator(): void
+    {
+        $this->actingAs($this->gestorDeCuentas());
+
+        Livewire::test('users')->call('delete', $this->yo->id);
+        $this->assertNotSoftDeleted($this->yo->refresh());
+
+        $this->yo->delete();
+
+        Livewire::test('users')->call('restore', $this->yo->id);
+        $this->assertSoftDeleted($this->yo->refresh());
+    }
+
+    public function test_the_row_of_an_administrator_offers_nothing_to_someone_who_is_not(): void
+    {
+        // Esconder y no enseñar apagado (§7, fase 12, decisión 3).
+        $this->actingAs($this->gestorDeCuentas());
+
+        Livewire::test('users')
+            ->assertDontSee('edit('.$this->yo->id.')')
+            ->assertDontSee('confirmDelete('.$this->yo->id.')');
+    }
+
+    /** Y un Administrador sigue haciendo su trabajo, que es lo que no se puede romper. */
+    public function test_an_administrator_still_hands_out_the_role(): void
+    {
+        $otro = User::factory()->role(PermissionCatalog::ROLE_OPERATIONS)->create();
+
+        Livewire::test('users')
+            ->call('edit', $otro->id)
+            ->set('role', PermissionCatalog::ROLE_ADMIN)
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $this->assertSame(PermissionCatalog::ROLE_ADMIN, $otro->refresh()->roleName());
+    }
+
     public function test_the_listing_says_who_is_what(): void
     {
         User::factory()->role(PermissionCatalog::ROLE_OPERATIONS)->create(['name' => 'Freddy']);

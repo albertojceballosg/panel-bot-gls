@@ -1,12 +1,10 @@
 <?php
 
 use App\Models\AuditLog;
-use App\Models\Courier;
-use App\Models\Merchant;
-use App\Models\PickupRoute;
-use App\Models\User;
 use App\Support\AuditPresenter;
+use App\Support\PermissionCatalog;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Component;
 use Livewire\WithPagination;
 
@@ -28,9 +26,19 @@ new #[Layout('components.layouts.app')] class extends Component
     /** Busca por autor y por nombre del registro tocado. */
     public string $search = '';
 
-    /** Nombre de clase del modelo, o '' para todos. */
+    /**
+     * Clave del módulo (`merchants`, `expenses`…), o '' para todos.
+     *
+     * Era el nombre de la clase del modelo hasta el 21/08/2026, y eso dejaba dos
+     * entradas «Gastos» en el desplegable —el catálogo de conceptos y los gastos
+     * por ruta son dos tablas del mismo módulo— y una lista escrita a mano que
+     * sólo cubría cuatro de los nueve modelos con historial.
+     */
     public string $moduleFilter = '';
 
+    /** La entrada abierta en el diálogo. Lo pone `show()`; el detalle va acotado igual que
+     *  el listado, y el candado evita además que el id cambie por debajo. */
+    #[Locked]
     public ?int $viewing = null;
 
     public function updatedSearch(): void
@@ -48,6 +56,23 @@ new #[Layout('components.layouts.app')] class extends Component
         $this->viewing = $id;
     }
 
+    /**
+     * Los modelos con historial que esta cuenta puede leer, y de qué módulo es
+     * cada uno.
+     *
+     * **Auditoría no puede ser la puerta de atrás a un módulo que no se puede
+     * ver** (§7, fase 12): aquí se lee el volcado entero de cada cambio, así que
+     * sin este filtro `audit-logs.view` enseñaba los correos de todas las
+     * cuentas y quién le dio el Administrador a quién —el rol Operaciones lo
+     * tiene, y no tiene `users.view` ni `roles.view`—.
+     *
+     * @return array<class-string, string>
+     */
+    private function visibles(): array
+    {
+        return PermissionCatalog::visibleAuditables(auth()->user());
+    }
+
     public function close(): void
     {
         $this->viewing = null;
@@ -62,8 +87,15 @@ new #[Layout('components.layouts.app')] class extends Component
     {
         $presenter = AuditPresenter::make();
 
+        $visibles = $this->visibles();
+
+        // El filtro llega del navegador: si no es un módulo que esta cuenta
+        // pueda ver, se cae al «todos los módulos» —los suyos— en vez de
+        // devolver una lista vacía que parecería que no hubo cambios.
+        $delFiltro = array_keys($visibles, $this->moduleFilter, true);
+
         $logs = AuditLog::query()
-            ->when($this->moduleFilter !== '', fn ($q) => $q->where('auditable_type', $this->moduleFilter))
+            ->whereIn('auditable_type', $delFiltro === [] ? array_keys($visibles) : $delFiltro)
             ->when($this->search !== '', function ($q) {
                 $termino = '%'.addcslashes(trim($this->search), '%_\\').'%';
 
@@ -85,22 +117,30 @@ new #[Layout('components.layouts.app')] class extends Component
             'entries' => $logs->getCollection()->mapWithKeys(
                 fn ($log) => [$log->id => $presenter->entry($log)],
             ),
-            'modules' => [
-                PickupRoute::class => 'Rutas',
-                Courier::class => 'UT',
-                Merchant::class => 'Comercios',
-                User::class => 'Usuarios',
-            ],
+            // Un módulo por entrada aunque tenga dos tablas detrás, y sólo los
+            // que esta cuenta puede ver: ofrecer un filtro que no devuelve nada
+            // es decirle que ahí no hubo cambios.
+            'modules' => collect($visibles)
+                ->unique()
+                ->mapWithKeys(fn (string $modulo) => [$modulo => PermissionCatalog::moduleLabel($modulo)])
+                ->sort()
+                ->all(),
+
+            // Acotado igual que el listado: el id llega del cliente, y sin esto
+            // se leería por su número el detalle de un cambio que la pantalla no
+            // enseña.
             'detail' => $this->viewing === null
                 ? null
-                : $presenter->entry(AuditLog::with('user', 'auditable')->findOrFail($this->viewing)),
+                : $presenter->entry(AuditLog::with('user', 'auditable')
+                    ->whereIn('auditable_type', array_keys($visibles))
+                    ->findOrFail($this->viewing)),
         ];
     }
 }; ?>
 
 <div>
     <x-ui.page-header title="Auditoría"
-                      description="Todos los cambios del maestro, del más reciente al más antiguo. Lo que cargó el seeder no aparece: no es el cambio de nadie." />
+                      description="Los cambios de los módulos que puedes ver, del más reciente al más antiguo. Lo que cargó el seeder no aparece: no es el cambio de nadie." />
 
     <x-ui.card padding="p-0">
         <div class="flex flex-col gap-3 border-b border-slate-200 px-6 py-3 sm:flex-row sm:items-center">
@@ -123,10 +163,17 @@ new #[Layout('components.layouts.app')] class extends Component
         </div>
 
         @if ($logs->isEmpty())
-            <x-ui.empty-state :title="$search !== '' || $moduleFilter !== '' ? 'Ningún cambio coincide' : 'Todavía no hay cambios'"
-                              :description="$search !== '' || $moduleFilter !== ''
-                                  ? 'Prueba con otro autor, otro registro u otro módulo.'
-                                  : 'En cuanto alguien edite algo desde el panel, aparecerá aquí.'">
+            {{-- Sin ningún módulo que mirar la lista sale vacía siempre, y decir
+                 «todavía no hay cambios» sería mentir: los hay, pero no son de
+                 esta cuenta. --}}
+            <x-ui.empty-state :title="$modules === []
+                                  ? 'Aquí no hay nada que puedas ver'
+                                  : ($search !== '' || $moduleFilter !== '' ? 'Ningún cambio coincide' : 'Todavía no hay cambios')"
+                              :description="$modules === []
+                                  ? 'El historial sólo enseña los cambios de los módulos que tu cuenta puede ver, y la tuya no tiene ninguno.'
+                                  : ($search !== '' || $moduleFilter !== ''
+                                      ? 'Prueba con otro autor, otro registro u otro módulo.'
+                                      : 'En cuanto alguien edite algo desde el panel, aparecerá aquí.')">
                 <x-slot:actions>
                     @if ($search !== '' || $moduleFilter !== '')
                         <x-ui.button variant="secondary" wire:click="$set('search', ''); $set('moduleFilter', '')">

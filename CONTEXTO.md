@@ -780,7 +780,7 @@ docker compose logs -f vite
 > Lo único que queda abierto de la 6 a la 11 es **6.D**, el backfill del `codigo`, que es mejora
 > y no requisito (§8).
 
-**La suite son 455 tests** (1.343 aserciones) el 19/08/2026, sobre Postgres. Es la cifra
+**La suite son 615 tests** (1.761 aserciones) el 21/08/2026, sobre Postgres. Es la cifra
 que hay que ver pasar antes de dar cualquier cosa por terminada, no la inspección del código.
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -2274,6 +2274,63 @@ La pantalla **no usa `CrudScreen`**: ese trait está construido sobre `SoftDelet
 reactivación, «ver dados de baja»— y aquí no hay nada de eso. Se reutiliza lo que no depende de
 ello: `SendsToasts` y el cerrojo de doble envío.
 
+#### Repaso de permisos del 21/08/2026
+
+Salió de revisar el panel entero buscando por dónde una cuenta podía llegar a lo que su rol no
+le da. **La conclusión primero: no se podía entrar a ninguna pantalla ajena.** Las tres capas
+—el `can:` de la ruta, el mismo `can:` que Livewire vuelve a aplicar en cada petición de
+actualización, y el `.manage` dentro de cada método que escribe— estaban puestas y probadas.
+
+Lo que sí había eran cinco formas de **ver o hacer de más sin saltarse ninguna puerta**. Las
+cinco están cerradas, y todas comparten el mismo razonamiento: **una regla de peso no puede
+sostenerse en cómo esté repartido el catálogo hoy**, porque desde esta fase los roles los crea
+el cliente.
+
+**1. `users.manage` era, en la práctica, el rol de Administrador.** La regla de «no puedes
+quitarte a ti mismo el Administrador» sólo cubría un sentido. Quien gestiona cuentas podía
+ponerse el rol, o crearse una cuenta con él, o —lo que se escapaba a simple vista— **cambiarle
+la contraseña a un Administrador y entrar con ella**. Y con ese rol vienen las copias, que son
+la base entera del cliente en un fichero (§10). Ahora: nadie se cambia el rol a sí mismo, y
+**al Administrador sólo lo reparte y lo toca otro Administrador** —crear, editar, dar de baja y
+reactivar—. La fila de un Administrador no ofrece botones a quien no lo es.
+
+**2. Auditoría enseñaba los cambios de módulos que la cuenta no puede ver.** Allí se lee el
+volcado entero de cada cambio, así que `audit-logs.view` daba los correos de todas las cuentas
+y **quién le dio el Administrador a quién** a un rol sin `users.view` — el caso de Operaciones.
+El listado, el desplegable de módulos y el detalle van filtrados por permiso, con el mapa
+modelo → módulo en `PermissionCatalog::auditables()`, que es de donde sale también la etiqueta:
+la lista que tenía `AuditPresenter` estaba a medias y los gastos salían con el nombre de la
+clase. De paso, el filtro pasa a ser la **clave del módulo** y no el nombre del modelo, porque
+los gastos son dos tablas del mismo módulo y salían dos veces.
+
+**3. El calendario enseñaba el dinero con sólo `capacity-calendar.view`.** El coste sale del
+maestro de gastos (fase 15) y la rentabilidad se calcula con él, así que ese permiso era
+también el de leer lo que cuesta la agencia. Las tres cifras en euros —ganancia, coste y
+rentabilidad— piden ahora `expenses.view`, en la celda y en el diálogo; el enlace a la jornada
+pide `incidents.view`, como el recuento de comercios pide `merchants.view` (§4). **Lo propio de
+la pantalla —volumen, ocupación y reparto— no cambia**, y para los dos roles de fábrica la
+pantalla se ve exactamente igual que antes.
+
+**4. La pantalla de copias no comprobaba el permiso dentro del componente.** Era la única que
+se saltaba la decisión 2 de esta fase, y la más potente del panel. Que no fuera explotable
+dependía de que Livewire reaplique el *middleware* de la ruta original, que es un detalle de
+una dependencia y no una decisión nuestra.
+
+**5. Ninguna propiedad llevaba `#[Locked]`.** Las públicas se rehidratan desde el navegador
+**después** del `mount`, así que lo que el servidor fija podía cambiarse por debajo. El peor no
+era el que se buscaba: **`CrudScreen::$editing`** dice sobre qué fila guarda `save()`, y con un
+id que no existe el `findOr(...)` de las pantallas **crea un registro nuevo en silencio** en vez
+de editar — un fallo callado de los que §3 llama peores que romperse. Con candado: `$editing` y
+`$confirmingDeletion` del trait, el `$module` de Configuraciones —que se colaba por detrás de su
+`abort_unless`—, la jornada de la pantalla de incidencias y las celdas abiertas del calendario y
+de Auditoría. **`selection` sigue sin candado a propósito**: esa la escriben las casillas, y por
+eso lo que se gestiona sale de consultar la jornada y no de fiarse de la lista.
+
+Los 24 tests que fijan las cinco reglas se comprobaron **al revés**: restaurando cada fichero a
+como estaba, fallan 20 de ellos. Los cuatro que no son los que prueban el camino bueno —que un
+Administrador siga haciendo su trabajo y que Operaciones vea la pantalla igual que antes—, que
+es la mitad que no se puede romper por cerrar la otra.
+
 ### Fase 13 — La ganancia por ruta. Hecha el 19/08/2026
 
 **Qué pide el cliente:** saber **cuánto deja cada ruta**, no sólo si sus paquetes pasaron a la
@@ -2688,6 +2745,25 @@ permisos— y `ExpensesCrudTest`, 33 más para el catálogo.
 - [ ] **El `coste`, y con él el margen.** Fuera de la v4 por decisión del cliente. El bot lo
       recibe de Envexpress en la misma respuesta que la ganancia, así que reincorporarlo es una
       columna aquí y una línea allí, sin peticiones nuevas.
+- [ ] **Lo que dejó abierto el repaso de permisos del 21/08/2026** (§7, fase 12). Los cinco
+      hallazgos con los que se podía ver o hacer de más están cerrados; queda lo que no era un
+      agujero sino falta de red o de endurecimiento:
+      - **Las pruebas de 403 de seis pantallas**: `users`, `couriers`, `pickup-routes`,
+        `settings`, `audit-logs` y `capacity-calendar`. El patrón está escrito en
+        `RolesAndPermissionsTest` y en `BackupsTest`; es copiarlo. Sin ellas, lo que se acaba
+        de cerrar se puede reabrir sin que nadie se entere.
+      - **La API no tiene *throttle* ni tope de tamaño de payload.** `POST /api/incidencias`
+        acepta `paquetes` sin límite y hace un `updateOrCreate` por fila. Ojo al ponerlo: el
+        contrato manda la jornada entera (§3.1) y **el tope se ajusta a la jornada, no al
+        revés**. Va con la fase 5, que es donde el bot alcanza al panel por red.
+      - **`SESSION_SECURE_COOKIE`, `SESSION_ENCRYPT` y `APP_DEBUG=false`** no están en
+        `.env.example`: sobre HTTP la cookie de sesión viaja sin `secure`. También fase 5.
+      - **Cambiar la contraseña no cierra las demás sesiones** (`Auth::logoutOtherDevices`),
+        que contradice un poco el motivo por el que se pide la contraseña actual.
+      - Y la repetición que el repaso midió, que no es deuda grave pero está contada: 20 copias
+        de los tres iconos SVG, seis `save()` casi calcados, diez cabeceras de tabla idénticas
+        y un `euros()` en tres sitios.
+
 - [ ] **¿Pest?** §7 pedía el test de contrato en Pest y está en PHPUnit, porque Pest no está
       instalado y añadirlo choca con la regla 2 de `CLAUDE.md`. Decisión pendiente.
 - [ ] **Backfill de `codigo`** para los comercios que lo tengan. Se puede extraer del portal
@@ -2764,6 +2840,10 @@ El CSV tiene cabecera `name,courier,pickup_route` y el seeder la verifica antes 
   `rutas.xlsx` ni el CSV derivado se versionan (§9).
 - `GET /api/rutas` devuelve el maestro completo. El token es lo único que lo protege:
   tratarlo como una contraseña.
+- **`users.manage` se trata como el permiso que reparte el Administrador** (21/08/2026, §7
+  fase 12): quien gestiona cuentas podía ponerse ese rol, crearse una cuenta con él o cambiarle
+  la contraseña a quien ya lo tiene y entrar con ella. Nadie se cambia el rol a sí mismo y al
+  Administrador sólo lo toca otro Administrador.
 - **La pantalla de copias (§7, fase 7) es el permiso más fuerte del panel**, y desde el
   18/08/2026 está detrás de uno: `backups.manage`, que sólo lleva el Administrador (§7, fase
   12). Quien descarga una copia se lleva la base entera del cliente en un fichero, y quien

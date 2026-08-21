@@ -4,12 +4,7 @@ namespace App\Support;
 
 use App\Enums\AuditAction;
 use App\Models\AuditLog;
-use App\Models\Courier;
-use App\Models\Merchant;
 use App\Models\PickupRoute;
-use App\Models\Role;
-use App\Models\Setting;
-use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
@@ -25,16 +20,6 @@ use Illuminate\Support\Collection;
  */
 class AuditPresenter
 {
-    /** @var array<string, string> */
-    private const MODULOS = [
-        PickupRoute::class => 'Rutas',
-        Courier::class => 'UT',
-        Merchant::class => 'Comercios',
-        User::class => 'Usuarios',
-        Role::class => 'Roles y permisos',
-        Setting::class => 'Configuraciones',
-    ];
-
     /** @var array<string, string> */
     private const CAMPOS = [
         'name' => 'Nombre',
@@ -83,9 +68,21 @@ class AuditPresenter
         ];
     }
 
+    /**
+     * De qué módulo es la entrada.
+     *
+     * El mapa vive en `PermissionCatalog::auditables()`, que es quien decide
+     * además **quién puede leerla**: dos listas de lo mismo acabarían diciendo
+     * cosas distintas, y la que había aquí ya se había quedado sin los gastos ni
+     * los permisos —esas entradas salían con el nombre de la clase—.
+     */
     public function module(AuditLog $log): string
     {
-        return self::MODULOS[$log->auditable_type] ?? class_basename($log->auditable_type);
+        $modulo = PermissionCatalog::auditables()[$log->auditable_type] ?? null;
+
+        return $modulo === null
+            ? class_basename($log->auditable_type)
+            : PermissionCatalog::moduleLabel($modulo);
     }
 
     /**

@@ -6,6 +6,7 @@ use App\Exceptions\DoubleSubmitException;
 use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Livewire\Attributes\Locked;
 use Livewire\WithPagination;
 use RuntimeException;
 
@@ -22,6 +23,15 @@ trait CrudScreen
 {
     use PreventsDoubleSubmit, SendsToasts, WithPagination;
 
+    /**
+     * El registro que se está editando, o null en un alta.
+     *
+     * `#[Locked]`: lo pone `edit()` y lo limpia `cancel()`, y **nada de la vista lo escribe**.
+     * Sin el candado llega del navegador como cualquier otra propiedad pública, y entonces
+     * `save()` guardaría sobre otra fila, o —peor— sobre ninguna: con un id que no existe, el
+     * `findOr(...)` de las pantallas crea un registro nuevo en silencio en vez de editar.
+     */
+    #[Locked]
     public ?int $editing = null;
 
     public bool $showingForm = false;
@@ -31,7 +41,8 @@ trait CrudScreen
     /** Los dados de baja se ocultan por defecto: son la excepción, no la norma. */
     public bool $showingTrashed = false;
 
-    /** Id pendiente de confirmar antes de darse de baja. */
+    /** Id pendiente de confirmar antes de darse de baja. Lo pone `confirmDelete()`. */
+    #[Locked]
     public ?int $confirmingDeletion = null;
 
     /** @return class-string<Model> */

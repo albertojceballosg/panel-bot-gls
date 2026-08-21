@@ -198,6 +198,48 @@ class BackupsTest extends TestCase
         $this->assertAuthenticated();
     }
 
+    // --- La cerradura, y no sólo la puerta -------------------------------------
+    //
+    // El `can:` de la ruta deja entrar; a los métodos del componente se llega desde el
+    // navegador (§7, fase 12, decisión 2). Es la pantalla que se lleva la base entera del
+    // cliente en un fichero (§10), así que es la última que puede quedarse sin esta red.
+
+    /** Una cuenta con sesión y sin este permiso: el rol Operaciones, sin ir más lejos. */
+    private function sinPermiso(): User
+    {
+        return User::factory()->withoutRole()->create();
+    }
+
+    public function test_the_screen_is_behind_its_permission(): void
+    {
+        $this->actingAs($this->sinPermiso());
+
+        $this->get('/backups')->assertForbidden();
+        $this->get('/backups/download')->assertForbidden();
+    }
+
+    public function test_an_account_without_the_permission_cannot_restore_through_livewire(): void
+    {
+        Process::fake();
+        $this->actingAs($this->sinPermiso());
+
+        Livewire::test('backups')
+            ->set('upload', $this->copia())
+            ->call('confirmRestore')
+            ->assertForbidden();
+
+        Livewire::test('backups')
+            ->set('upload', $this->copia())
+            ->set('confirming', true)
+            ->set('confirmation', 'RESTAURAR')
+            ->call('restore')
+            ->assertForbidden();
+
+        // Y la base no se tocó. `assertNothingRan` no vale: pintar la pantalla pregunta por
+        // las herramientas (`pg_dump --version`), que sólo mira si están.
+        Process::assertDidntRun(fn ($proceso) => str_contains($this->linea($proceso), 'pg_restore'));
+    }
+
     // --- La pantalla -----------------------------------------------------------
 
     public function test_it_warns_when_the_tools_are_missing(): void

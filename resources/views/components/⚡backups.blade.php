@@ -1,6 +1,7 @@
 <?php
 
 use App\Support\DatabaseBackup;
+use App\Support\PermissionCatalog;
 use App\Support\SendsToasts;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -44,9 +45,28 @@ new #[Layout('components.layouts.app')] class extends Component
         return $this->backups ??= app(DatabaseBackup::class);
     }
 
+    /**
+     * La cerradura de esta pantalla, y va **dentro** del componente.
+     *
+     * El `can:` de la ruta deja entrar, pero a estos dos métodos se llega desde el navegador
+     * (§7, fase 12, decisión 2). Era la única pantalla que se lo saltaba, y justamente la que
+     * se lleva la base entera del cliente en un fichero (§10): que hoy no se pueda rodear
+     * depende de que Livewire vuelva a aplicar el *middleware* de la ruta original en cada
+     * petición, que es un detalle de una dependencia y no una decisión nuestra.
+     *
+     * Aquí no hay un `.view` que separar: entrar en la pantalla ya es poder descargar, así
+     * que el permiso es el mismo con el que se entra.
+     */
+    private function authorizeManage(): void
+    {
+        $this->authorize(PermissionCatalog::name('backups', PermissionCatalog::MANAGE));
+    }
+
     /** Abre la confirmación, ya con el fichero elegido y comprobado. */
     public function confirmRestore(): void
     {
+        $this->authorizeManage();
+
         $this->validate(
             ['upload' => ['required', 'file', 'max:20480']],
             ['upload.required' => 'Elige el fichero de la copia.', 'upload.max' => 'El fichero no puede pasar de 20 MB.'],
@@ -72,6 +92,8 @@ new #[Layout('components.layouts.app')] class extends Component
 
     public function restore()
     {
+        $this->authorizeManage();
+
         if (! $this->confirming || $this->upload === null) {
             return null;
         }

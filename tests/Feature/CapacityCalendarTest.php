@@ -705,33 +705,63 @@ class CapacityCalendarTest extends TestCase
 
     // --- Consultas ------------------------------------------------------------
 
-    public function test_the_whole_table_is_five_queries(): void
+    /** Añade UT a la semana, con un paquete de cada una en cada uno de los cinco días. */
+    private function anadirUts(int $desde, int $hasta): void
     {
-        $ruta = PickupRoute::create(['name' => '3']);
+        $ruta = PickupRoute::firstOrCreate(['name' => '3']);
 
-        foreach (range(1, 5) as $i) {
+        foreach (range($desde, $hasta) as $i) {
             Courier::create(['name' => "UT {$i}"]);
         }
 
         foreach (range(0, 4) as $dia) {
-            $run = $this->runOn($this->lunes->copy()->addDays($dia));
+            $fecha = $this->lunes->copy()->addDays($dia);
 
-            foreach (range(1, 5) as $i) {
+            // La jornada es única por fecha (§3.1): la segunda tanda de UT cuelga de las
+            // corridas que ya existen, no de otras nuevas.
+            $run = IncidentRun::firstWhere('run_date', $fecha->toDateString()) ?? $this->runOn($fecha);
+
+            foreach (range($desde, $hasta) as $i) {
                 $this->package($run, "UT {$i}", 1.5, ['assigned_route_id' => $ruta->id]);
             }
         }
+    }
 
+    /** Las consultas que dispara pintar la pantalla una vez. */
+    private function consultasDeLaTabla(): int
+    {
         $consultas = 0;
-        \DB::listen(function () use (&$consultas) {
+        $escucha = \DB::listen(function () use (&$consultas) {
             $consultas++;
         });
 
         Livewire::test('capacity-calendar');
 
+        return $consultas;
+    }
+
+    public function test_the_whole_table_is_the_same_handful_of_queries(): void
+    {
         // Corridas, agregado, maestro, la configuración de la pantalla (§7, fase 11) y el
-        // gasto fijo del mes (fase 15). Cinco, y las mismas cinco con 5 UT que con 50 —y
-        // aunque la semana cruce de mes—: la tabla se arma en SQL, no fila a fila.
-        $this->assertSame(5, $consultas);
+        // gasto fijo del mes (fase 15). Cinco, más las de cargar los permisos de la cuenta
+        // —desde el 21/08/2026 la pantalla pregunta si puede enseñar euros—, que las cachea
+        // el propio paquete y aquí salen en frío.
+        //
+        // Se comparan dos tamaños en vez de fijar el número: lo que hay que impedir es que
+        // **crezca con las filas**, que es lo que pasaría armando la tabla fila a fila, y un
+        // número exacto se queda viejo en cuanto la pantalla pregunte una cosa más.
+        $this->anadirUts(1, 5);
+        $this->consultasDeLaTabla();      // en frío se cargan los permisos
+        $cincoUt = $this->consultasDeLaTabla();
+
+        $this->anadirUts(6, 50);
+        $cincuentaUt = $this->consultasDeLaTabla();
+
+        $this->assertSame($cincoUt, $cincuentaUt,
+            "Con 50 UT se hicieron {$cincuentaUt} consultas y con 5, {$cincoUt}: la tabla se está armando fila a fila.");
+
+        // Y que sigan siendo un puñado, no que no crezcan estando ya disparadas.
+        $this->assertLessThan(12, $cincoUt, "Se esperaban pocas consultas y se hicieron {$cincoUt}.");
     }
 
     public function test_the_breakdown_only_costs_two_queries_when_it_is_open(): void
@@ -1626,5 +1656,116 @@ class CapacityCalendarTest extends TestCase
 
         // El reparto del volumen sigue estando: no depende del dinero.
         $this->assertSame(0.8, $propio['share']);
+    }
+
+    // --- El dinero pide `expenses.view` ---------------------------------------
+    //
+    // El coste sale del maestro de gastos (fase 15) y la rentabilidad se calcula con él, así
+    // que sin esto el permiso de ver el calendario sería también el de leer lo que cuesta la
+    // agencia. Lo propio de la pantalla —volumen, ocupación y su reparto— no depende de eso.
+
+    /** Una cuenta que sólo entra al calendario: ni gastos ni incidencias. */
+    private function soloElCalendario(): User
+    {
+        $usuario = User::factory()->withoutRole()->create();
+        $usuario->givePermissionTo('capacity-calendar.view');
+
+        return $usuario;
+    }
+
+    /** Un día con las tres cifras de dinero completas. */
+    private function diaConDinero(): void
+    {
+        $ruta = PickupRoute::create(['name' => '3']);
+        Courier::create(['name' => 'Freddy GLS', 'maximum_volume' => 10.0, 'pickup_route_id' => $ruta->id]);
+
+        $lunes = $this->runOn($this->lunes);
+        $this->package($lunes, 'Freddy GLS', 4.0, [
+            'assigned_route_id' => $ruta->id,
+            'net_revenue' => 88.80,
+            'real_cost' => 22.20,
+        ]);
+
+        RouteExpense::create([
+            'pickup_route_id' => $ruta->id,
+            'expense_id' => Expense::create(['name' => 'Gasolina'])->id,
+            'amount' => '400.00',
+            'recurrent' => true,
+            'starts_on' => $this->lunes->copy()->startOfMonth()->toDateString(),
+            'ends_on' => null,
+        ]);
+    }
+
+    public function test_the_cell_shows_no_money_without_the_expenses_permission(): void
+    {
+        $this->diaConDinero();
+        $this->actingAs($this->soloElCalendario());
+
+        $componente = Livewire::test('capacity-calendar');
+
+        // Ni los importes ni el menú que los enciende.
+        $componente->assertDontSee('88,80 €')
+            ->assertDontSee('22,20 €')
+            ->assertDontSee('Ganancia')
+            ->assertDontSee('Coste')
+            ->assertDontSee('Rentabilidad')
+            // Y lo propio de la pantalla se sigue viendo entero.
+            ->assertSee('Ocupación')
+            ->assertSee('40 %');
+    }
+
+    /** Ni encendiéndolas a mano por la URL, que es la única forma de tocar esto desde fuera. */
+    public function test_the_url_cannot_switch_the_money_back_on(): void
+    {
+        $this->diaConDinero();
+        $this->actingAs($this->soloElCalendario());
+
+        Livewire::test('capacity-calendar')
+            ->set('hidden', '')
+            ->call('toggle', 'revenue')
+            ->assertDontSee('88,80 €')
+            ->assertViewHas('ver', fn (array $ver) => ! in_array('revenue', $ver, true));
+    }
+
+    public function test_the_breakdown_shows_no_money_either(): void
+    {
+        $this->diaConDinero();
+        $this->actingAs($this->soloElCalendario());
+
+        Livewire::test('capacity-calendar')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertDontSee('88,80 €')
+            ->assertDontSee('Ganancia de sus rutas')
+            ->assertDontSee('ganancia neta')
+            // El diálogo sigue abriendo con lo suyo: la ocupación y el reparto del volumen.
+            ->assertSee('Ocupación del día')
+            ->assertSee('De su ruta');
+    }
+
+    /** La jornada es otra pantalla: sin `incidents.view` no se enlaza (§7, fase 12). */
+    public function test_it_does_not_link_to_the_day_without_the_incidents_permission(): void
+    {
+        $this->diaConDinero();
+        $this->actingAs($this->soloElCalendario());
+
+        Livewire::test('capacity-calendar')
+            ->assertDontSee('Aviso de incidencias')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertDontSee('Ver las incidencias del día');
+    }
+
+    /** Y con los dos permisos —el caso de Operaciones— la pantalla no cambia. */
+    public function test_operations_still_sees_the_whole_cell(): void
+    {
+        $this->diaConDinero();
+        $this->actingAs(User::factory()->role(\App\Support\PermissionCatalog::ROLE_OPERATIONS)->create());
+
+        Livewire::test('capacity-calendar')
+            ->assertSee('88,80 €')
+            ->assertSee('Ganancia')
+            ->assertSee('Coste')
+            ->call('openDetail', 'Freddy GLS', $this->lunes->toDateString())
+            ->assertSee('Ganancia de sus rutas')
+            ->assertSee('Ver las incidencias del día');
     }
 }

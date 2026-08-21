@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Support\PermissionCatalog;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -1230,5 +1231,22 @@ class IncidentRunScreenTest extends TestCase
         $this->package($corrida, '1', revenue: null);
 
         $this->get($this->url())->assertOk()->assertDontSee('0,00 €');
+    }
+
+    // --- La jornada es el marco, no un parámetro -----------------------------
+
+    /**
+     * Toda consulta de esta pantalla va acotada a `$run` —«los paquetes de *esta* jornada»—,
+     * y ahí se apoya, por ejemplo, que no se pueda anotar el paquete de otro día pasando otro
+     * número. Sin `#[Locked]`, la propiedad que sostiene ese marco la escribía el navegador.
+     */
+    public function test_the_day_being_looked_at_cannot_be_swapped_from_the_browser(): void
+    {
+        $this->storedRun();
+        $otra = $this->storedRun('2026-08-04');
+
+        $this->expectException(CannotUpdateLockedPropertyException::class);
+
+        Livewire::test('incident-run', ['date' => '2026-08-03'])->set('run', $otra);
     }
 }

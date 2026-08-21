@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Support\AuditPresenter;
 use App\Support\SettingsCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Features\SupportTesting\Testable;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -288,5 +289,28 @@ class SettingsTest extends TestCase
         $this->assertStringContainsString('min="0"', $html);
         $this->assertStringContainsString('max="30"', $html);
         $this->assertStringContainsString('días', $html);
+    }
+
+    // --- El módulo no se cambia por debajo -----------------------------------
+
+    /**
+     * `mount()` comprueba que el módulo existe en el catálogo y si no, 404. Sin `#[Locked]`
+     * esa comprobación se queda corta: las propiedades públicas se rehidratan desde el
+     * navegador **después** del `mount`, así que bastaba con mandar otro valor para que
+     * `save()` escribiera parámetros de un módulo que no existe.
+     */
+    public function test_the_module_cannot_be_swapped_from_the_browser(): void
+    {
+        $this->expectException(CannotUpdateLockedPropertyException::class);
+
+        $this->pantalla()->set('module', 'inventado');
+    }
+
+    /** Ni por otro que sí existe: cada módulo es una pantalla, no un filtro de ésta. */
+    public function test_not_even_for_another_module_of_the_catalogue(): void
+    {
+        $this->expectException(CannotUpdateLockedPropertyException::class);
+
+        $this->pantalla()->set('module', 'profitability');
     }
 }

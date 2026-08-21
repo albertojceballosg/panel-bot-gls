@@ -21,8 +21,13 @@ use Livewire\Component;
  * **Una cuenta, un rol** (§7, fase 12). El paquete admite varios, pero con dos
  * roles «Administrador + Operaciones» no dice nada que no diga ya
  * «Administrador», y una lista de casillas invita a combinaciones que nadie ha
- * pensado. Tampoco puedes quitarte a ti mismo el Administrador, por lo mismo que
- * no puedes darte de baja: es la forma de quedarte fuera de tu propio panel.
+ * pensado. Tampoco puedes **cambiarte el rol** a ti mismo, por lo mismo que no
+ * puedes darte de baja: quitártelo es quedarte fuera de tu propio panel, y
+ * ponértelo es dártelo todo sin que nadie lo apruebe. Que lo haga otra cuenta.
+ *
+ * Y **al Administrador sólo lo reparte y lo toca un Administrador** — ver
+ * `amAdministrator()`, que es lo que impide que `users.manage` sea en la
+ * práctica el rol de Administrador.
  *
  * **Nadie se da de baja a sí mismo.** Eso va aquí y no en el modelo, a
  * diferencia de las reglas de `PickupRoute`: «a ti mismo» sólo significa algo
@@ -35,6 +40,7 @@ new #[Layout('components.layouts.app')] class extends Component
     // llamar a `parent::delete()`, que con un trait no existe.
     use CrudScreen {
         delete as private deleteRecord;
+        restore as private restoreRecord;
     }
 
     public const POR_PAGINA = 10;
@@ -129,7 +135,64 @@ new #[Layout('components.layouts.app')] class extends Component
             return;
         }
 
+        // Y al Administrador sólo lo da de baja otro Administrador: ver
+        // `amAdministrator()`. Aquí no se gana acceso, se lo quita a quien lo
+        // tiene todo, que es la otra mitad del mismo problema.
+        if (! $this->amAdministrator()
+            && User::withTrashed()->find($id)?->roleName() === PermissionCatalog::ROLE_ADMIN) {
+            $this->confirmingDeletion = null;
+            $this->toastError('Sólo un Administrador puede dar de baja a otro Administrador.');
+
+            return;
+        }
+
         $this->deleteRecord($id);
+    }
+
+    public function restore(int $id): void
+    {
+        if (! $this->amAdministrator()
+            && User::onlyTrashed()->find($id)?->roleName() === PermissionCatalog::ROLE_ADMIN) {
+            $this->toastError('Sólo un Administrador puede reactivar la cuenta de otro Administrador.');
+
+            return;
+        }
+
+        $this->restoreRecord($id);
+    }
+
+    /**
+     * Si esta cuenta puede tocar la de ese usuario. Es lo que decide qué botones
+     * lleva su fila: un botón que existe se pulsa, y la respuesta sería un aviso
+     * que parece un fallo del panel (§7, fase 12, decisión 3).
+     */
+    public function canManageAccount(User $user): bool
+    {
+        return $this->canManage()
+            && ($this->amAdministrator() || $user->roleName() !== PermissionCatalog::ROLE_ADMIN);
+    }
+
+    /**
+     * Si quien está mirando es Administrador.
+     *
+     * De aquí cuelgan las tres reglas de abajo, y todas dicen lo mismo: **al
+     * Administrador sólo lo reparte y lo toca un Administrador**.
+     *
+     * Sin ellas, `users.manage` **es** el rol de Administrador aunque el
+     * catálogo diga otra cosa. Quien gestiona cuentas puede crearse una con ese
+     * rol, o cambiarle la contraseña a la que ya lo tiene y entrar con ella; y
+     * con el Administrador vienen las copias de seguridad, que son la base
+     * entera del cliente en un fichero (§10).
+     *
+     * Hoy no cambian nada para quien las usa, porque sólo el Administrador lleva
+     * `users.manage`. Existen porque **desde la fase 12 los roles los crea el
+     * cliente**, y una regla de este peso no puede sostenerse en cómo esté
+     * repartido el catálogo hoy. Es la misma idea que ya protege «Roles y
+     * permisos»: quien puede tocarlos puede dárselo todo a sí mismo (§7, fase 12).
+     */
+    private function amAdministrator(): bool
+    {
+        return auth()->user()->roleName() === PermissionCatalog::ROLE_ADMIN;
     }
 
     public function save(): void
@@ -139,18 +202,38 @@ new #[Layout('components.layouts.app')] class extends Component
 
         $this->validate(User::rules($this->editing));
 
-        // Quitarte a ti mismo el Administrador te deja fuera de media
-        // aplicación con la sesión abierta, y sin poder volver a entrar a
-        // arreglarlo. Que te lo quite otro.
-        if ($this->editing === auth()->id()
-            && auth()->user()->roleName() === PermissionCatalog::ROLE_ADMIN
-            && $this->role !== PermissionCatalog::ROLE_ADMIN) {
-            $this->toastError('No puedes quitarte a ti mismo el rol de Administrador. Que lo haga otro usuario.');
+        // Nadie se cambia el rol a sí mismo.
+        //
+        // Hasta el 21/08/2026 esto sólo impedía **quitarte** el Administrador
+        // —quedarte fuera de tu propio panel sin poder volver a entrar—, y el
+        // sentido contrario quedaba abierto: con `users.manage` bastaba con
+        // editarte y elegir. No vale con nombrar al Administrador, porque los
+        // roles los crea el cliente y otro cualquiera puede llevar dentro las
+        // copias de seguridad. Que te lo cambie otro, como la baja.
+        if ($this->editing === auth()->id() && $this->role !== auth()->user()->roleName()) {
+            $this->toastError('No puedes cambiarte el rol a ti mismo. Que lo haga otro usuario.');
 
             return;
         }
 
         $editando = $this->editing !== null;
+
+        // Y las otras dos mitades de la misma regla: ver `amAdministrator()`.
+        // Repartir el Administrador, y tocar a quien ya lo tiene —cambiarle la
+        // contraseña es entrar con su cuenta—.
+        if (! $this->amAdministrator()) {
+            if ($this->role === PermissionCatalog::ROLE_ADMIN) {
+                $this->toastError('Sólo un Administrador puede dar el rol de Administrador.');
+
+                return;
+            }
+
+            if ($editando && User::withTrashed()->find($this->editing)?->roleName() === PermissionCatalog::ROLE_ADMIN) {
+                $this->toastError('Sólo un Administrador puede editar la cuenta de otro Administrador.');
+
+                return;
+            }
+        }
 
         $hecho = $this->transactionally($this->lockKey('save'), function () {
             $usuario = User::withTrashed()->findOr($this->editing ?? 0, fn () => new User);
@@ -294,7 +377,7 @@ new #[Layout('components.layouts.app')] class extends Component
 
                                 <td class="px-6 py-3">
                                     <div class="flex justify-end gap-1">
-                                        @if ($this->canManage())
+                                        @if ($this->canManageAccount($user))
                                             @if ($user->trashed())
                                                 <x-ui.icon-button label="Reactivar"
                                                                   wire:click="restore({{ $user->id }})"

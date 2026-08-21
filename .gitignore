@@ -23,3 +23,6 @@ yarn-error.log
 # Ver CONTEXTO_BOT.md §9.
 /database/seeders/data/*.csv
 /database/seeders/data/*.xlsx
+
+# Análisis interno del panel: rutas de ataque concretas, no se versiona.
+/ANALISIS_PANEL.md

@@ -6,9 +6,11 @@ use App\Models\Setting;
 use App\Models\RouteExpense;
 use App\Models\RunPackage;
 use App\Support\DailyExpenseShare;
+use App\Support\PermissionCatalog;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 
@@ -95,6 +97,60 @@ new #[Layout('components.layouts.app')] class extends Component
         )));
     }
 
+    /**
+     * Las tres cifras en euros de la celda.
+     *
+     * **Piden `expenses.view`**, y por eso están juntas: el coste sale del maestro de gastos
+     * (fase 15) y la rentabilidad se calcula con él, así que enseñarlas aquí convertiría el
+     * permiso de ver el calendario en uno de leer lo que cuesta la agencia. La ganancia va
+     * con ellas porque sin el coste al lado no es una lectura distinta: es la otra mitad de
+     * la misma tarjeta, y separarlas dejaría media respuesta en pantalla.
+     *
+     * Lo propio de esta pantalla —el volumen, la ocupación y su reparto— no depende de eso y
+     * se ve con `capacity-calendar.view` a secas.
+     */
+    private const DINERO = ['profitability', 'revenue', 'cost'];
+
+    /**
+     * Si esta cuenta puede ver los euros. Es lo mismo que hace `canSeeMerchants()` en el
+     * listado de rutas: **el permiso de ver una pantalla no puede volverse el de ver otra**
+     * por pulsar una cifra (§7, fase 12).
+     */
+    public function canSeeMoney(): bool
+    {
+        return (bool) auth()->user()?->can(PermissionCatalog::name('expenses', PermissionCatalog::VIEW));
+    }
+
+    /** Y si puede ir a la jornada, que es otra pantalla y otro permiso. */
+    public function canSeeIncidents(): bool
+    {
+        return (bool) auth()->user()?->can(PermissionCatalog::name('incidents', PermissionCatalog::VIEW));
+    }
+
+    /**
+     * El catálogo que esta cuenta puede llegar a ver.
+     *
+     * Se filtra aquí y no en cada `@if` de la celda: de esto salen a la vez lo que se pinta,
+     * lo que ofrece el menú «Valores» y el contador de cuántas hay apagadas, así que una
+     * cifra escondida por permiso no puede quedar contada como apagada por su dueño.
+     *
+     * @return array<string, string>
+     */
+    private function allowedValues(): array
+    {
+        $valores = self::VALORES;
+
+        if (! $this->canSeeMoney()) {
+            $valores = array_diff_key($valores, array_flip(self::DINERO));
+        }
+
+        if (! $this->canSeeIncidents()) {
+            unset($valores['incidents']);
+        }
+
+        return $valores;
+    }
+
     /** Lo apagado, ya limpio de claves inventadas. */
     private function hiddenKeys(): array
     {
@@ -104,10 +160,15 @@ new #[Layout('components.layouts.app')] class extends Component
         ));
     }
 
-    /** Y lo que queda encendido, en el orden en que se pinta. */
+    /**
+     * Y lo que queda encendido, en el orden en que se pinta.
+     *
+     * Sobre el catálogo **permitido**: lo que apaga el permiso no lo puede encender un
+     * `?sin=` tecleado a mano, que es la única forma de tocar esto desde fuera.
+     */
     private function shownKeys(): array
     {
-        return array_values(array_diff(array_keys(self::VALORES), $this->hiddenKeys()));
+        return array_values(array_diff(array_keys($this->allowedValues()), $this->hiddenKeys()));
     }
 
     /**
@@ -117,8 +178,10 @@ new #[Layout('components.layouts.app')] class extends Component
      * un id: la fila puede ser de alguien que ya no está en el maestro, y '' es
      * la de «Sin UT asignada». Las dos a null es el diálogo cerrado.
      */
+    #[Locked]
     public ?string $detailCourier = null;
 
+    #[Locked]
     public ?string $detailDay = null;
 
     /**
@@ -740,9 +803,10 @@ new #[Layout('components.layouts.app')] class extends Component
             'esLaSemanaEnCurso' => $lunes->isSameDay(Carbon::today()->startOfWeek(Carbon::MONDAY)),
             'hayMaestro' => $maestro->isNotEmpty(),
 
-            // Qué cifras se pintan hoy en la celda, y el catálogo entero para el menú.
+            // Qué cifras se pintan hoy en la celda, y las que esta cuenta puede llegar a
+            // encender, para el menú.
             'ver' => $this->shownKeys(),
-            'valores' => self::VALORES,
+            'valores' => $this->allowedValues(),
         ];
     }
 }; ?>
@@ -1184,7 +1248,12 @@ new #[Layout('components.layouts.app')] class extends Component
         <x-ui.modal :title="$detalle['label']"
                     :description="ucfirst($detalle['day']->translatedFormat('l j \d\e F \d\e Y'))"
                     close="closeDetail">
+            {{-- La tarjeta del dinero entera detrás de `expenses.view`, por lo mismo que las
+                 tres cifras de la celda: aquí sale además el gasto fijo de cada concepto,
+                 desglosado. Sin ella el diálogo sigue teniendo sentido —abre con la
+                 ocupación y el reparto del volumen, que es lo propio del calendario—. --}}
             <div class="rounded-lg bg-slate-50 px-4 py-3">
+                @if ($this->canSeeMoney())
                 {{-- Lo que dejaron sus rutas ese día, con el número de envíos sobre los que
                      se sumó pegado al importe (§7, fase 13.C, regla 1). **«De sus rutas» y
                      no «del día»**: aquí sólo están los envíos de esta UT, así que llamarlo
@@ -1306,11 +1375,17 @@ new #[Layout('components.layouts.app')] class extends Component
                     </div>
                 @endif
 
+                @endif
+
                 {{-- La ocupación cierra la tarjeta desde el 20/08/2026, a petición: arriba
                      va el dinero —ganancia, coste y lo que queda—, que es a lo que se abre
                      este diálogo, y los metros cúbicos quedan como el contexto que explica
-                     el reparto de abajo. --}}
-                <div class="mt-3 flex items-baseline justify-between gap-4 border-t border-slate-200 pt-3">
+                     el reparto de abajo. Sin permiso para ver euros no hay nada encima, así
+                     que la ocupación abre la tarjeta y no lleva línea de separación. --}}
+                <div @class([
+                    'flex items-baseline justify-between gap-4',
+                    'mt-3 border-t border-slate-200 pt-3' => $this->canSeeMoney(),
+                ])>
                     <div>
                         <p class="text-sm font-medium text-shell-900">Ocupación del día</p>
                         <p class="text-xs text-slate-500">
@@ -1341,7 +1416,10 @@ new #[Layout('components.layouts.app')] class extends Component
                              separados —un envío voluminoso puede facturar poco y al revés—.
                              Cada uno con su cuenta, que tampoco es la misma: los envíos con
                              volumen y los que tienen valoración de Envexpress no coinciden. --}}
-                        <dd class="grid grid-cols-2 gap-x-4 text-right whitespace-nowrap tabular-nums">
+                        <dd @class([
+                            'gap-x-4 text-right whitespace-nowrap tabular-nums',
+                            'grid grid-cols-2' => $this->canSeeMoney(),
+                        ])>
                             <div>
                                 <span class="block text-lg font-semibold text-shell-900">
                                     {{ $parte['share'] === null ? '—' : $ocupacion($parte['share']) }}
@@ -1360,7 +1438,10 @@ new #[Layout('components.layouts.app')] class extends Component
                                 @endif
                             </div>
 
-                            {{-- En euros y no en porcentaje (19/08/2026, decisión del
+                            {{-- El dinero del reparto, detrás del mismo permiso que el resto:
+                                 es lo que se facturó, partido por rutas.
+
+                                 En euros y no en porcentaje (19/08/2026, decisión del
                                  cliente): en «Fuera de su ruta» lo que se quiere ver es el
                                  dinero que acabó en otra furgoneta, no qué fracción del día
                                  era. El importe es la cifra, y su cuenta va debajo.
@@ -1368,6 +1449,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                  **«Neta» aquí es «sin IVA», no «después de costes»**: el
                                  coste no viaja en el contrato (§3.1) y esto no es el margen.
                                  De ahí el título, que lo dice al pasar por encima. --}}
+                            @if ($this->canSeeMoney())
                             <div title="Lo facturado por esos envíos sin IVA. No es el margen: el coste no llega a este panel.">
                                 <span class="block text-lg font-semibold text-shell-900">
                                     {{ $euros($parte['revenue']) }}
@@ -1379,6 +1461,7 @@ new #[Layout('components.layouts.app')] class extends Component
                                     {{ $parte['priced'] }} con dato
                                 </span>
                             </div>
+                            @endif
                         </dd>
                     </div>
                 @endforeach
@@ -1399,10 +1482,14 @@ new #[Layout('components.layouts.app')] class extends Component
                 <x-ui.button variant="secondary" wire:click="closeDetail">Cerrar</x-ui.button>
 
                 {{-- La pregunta que sigue al «19 % acabó fuera de su ruta» es
-                     cuál se lo llevó, y eso está en la jornada de ese día. --}}
-                <x-ui.button as="a" href="{{ $detalle['incidents'] }}" wire:navigate>
-                    Ver las incidencias del día
-                </x-ui.button>
+                     cuál se lo llevó, y eso está en la jornada de ese día. Sin
+                     `incidents.view` no se enlaza: al otro lado hay un 403, y un
+                     botón que no lleva a ninguna parte parece un fallo del panel. --}}
+                @if ($this->canSeeIncidents())
+                    <x-ui.button as="a" href="{{ $detalle['incidents'] }}" wire:navigate>
+                        Ver las incidencias del día
+                    </x-ui.button>
+                @endif
             </x-slot:footer>
         </x-ui.modal>
     @endif

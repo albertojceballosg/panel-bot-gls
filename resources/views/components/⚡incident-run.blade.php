@@ -9,6 +9,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 
@@ -52,6 +53,13 @@ new #[Layout('components.layouts.app')] class extends Component
      */
     public const SIN_UT = 'sin-ut';
 
+    /**
+     * La jornada que se está mirando. La resuelve `mount()` por su fecha, que es la clave
+     * natural (§3.1), y **el candado es lo que la deja quieta**: es el marco al que se acotan
+     * todas las consultas de la pantalla —«los paquetes de *esta* jornada»—, así que una
+     * propiedad que el navegador pueda cambiar convertiría ese marco en un parámetro más.
+     */
+    #[Locked]
     public IncidentRun $run;
 
     /**
@@ -62,10 +70,12 @@ new #[Layout('components.layouts.app')] class extends Component
     #[Url(as: 'ut', except: '')]
     public string $courier = '';
 
-    /** El paquete abierto en el diálogo de detalle, si hay alguno. */
+    /** El paquete abierto en el diálogo de detalle, si hay alguno. Lo pone `show()`. */
+    #[Locked]
     public ?int $selected = null;
 
-    /** El paquete abierto en el diálogo de gestión, si hay alguno. */
+    /** El paquete abierto en el diálogo de gestión, si hay alguno. Lo pone `manage()`. */
+    #[Locked]
     public ?int $managing = null;
 
     public string $note = '';
@@ -86,7 +96,15 @@ new #[Layout('components.layouts.app')] class extends Component
      */
     public array $selection = [];
 
-    /** El diálogo de gestión abierto sobre la selección, no sobre un paquete. */
+    /**
+     * El diálogo de gestión abierto sobre la selección, no sobre un paquete.
+     *
+     * Con candado como los dos de arriba: lo abre `manageSelection()`, que comprueba el
+     * permiso antes. `selection` no lo lleva, y es la diferencia que importa — esa sí la
+     * escriben las casillas del navegador, y por eso lo que se gestiona sale siempre de
+     * consultar la jornada y no de fiarse de la lista.
+     */
+    #[Locked]
     public bool $bulk = false;
 
     public function mount(string $date): void

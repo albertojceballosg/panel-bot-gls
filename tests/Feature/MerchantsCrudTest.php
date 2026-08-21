@@ -7,6 +7,7 @@ use App\Models\Merchant;
 use App\Models\PickupRoute;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -358,6 +359,25 @@ class MerchantsCrudTest extends TestCase
         Livewire::test('merchants')->call('restore', $merchant->id);
 
         $this->assertNotSoftDeleted($merchant->refresh());
+    }
+
+    // --- Lo que fija el servidor no lo mueve el navegador --------------------
+
+    /**
+     * `editing` dice sobre qué fila guarda `save()`, y lo pone `edit()`. Es de `CrudScreen`,
+     * así que esto vale para las seis pantallas que lo usan.
+     *
+     * Sin `#[Locked]` llegaba del navegador como cualquier propiedad pública: guardar caía
+     * sobre otro registro, y con un id que no existe **creaba uno nuevo en silencio** —el
+     * `findOr(..., fn () => new Merchant)` de `save()`—, que es peor que fallar.
+     */
+    public function test_the_record_being_edited_cannot_be_swapped_from_the_browser(): void
+    {
+        $merchant = $this->merchant('Zona Joven');
+
+        $this->expectException(CannotUpdateLockedPropertyException::class);
+
+        Livewire::test('merchants')->call('edit', $merchant->id)->set('editing', 9999);
     }
 
     // --- Doble envío ---------------------------------------------------------

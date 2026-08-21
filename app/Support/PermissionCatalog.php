@@ -2,6 +2,17 @@
 
 namespace App\Support;
 
+use App\Models\Courier;
+use App\Models\Expense;
+use App\Models\Merchant;
+use App\Models\Permission;
+use App\Models\PickupRoute;
+use App\Models\Role;
+use App\Models\RouteExpense;
+use App\Models\Setting;
+use App\Models\User;
+use Illuminate\Contracts\Auth\Access\Authorizable;
+
 /**
  * Qué se puede hacer en cada pantalla, y qué puede cada rol (CONTEXTO.md §7,
  * fase 12).
@@ -162,6 +173,57 @@ class PermissionCatalog
                 ],
             ],
         ];
+    }
+
+    /**
+     * Qué módulo cubre cada modelo con historial (§4).
+     *
+     * Es lo que impide que **Auditoría sea la puerta de atrás a un módulo que la
+     * cuenta no puede ver**: allí se lee el volcado entero de cada cambio, así
+     * que sin esto `audit-logs.view` enseñaría los correos de todas las cuentas
+     * y quién le dio el Administrador a quién a un rol que no tiene `users.view`
+     * —el caso de Operaciones—.
+     *
+     * Dos modelos pueden caer en el mismo módulo: el catálogo de conceptos y los
+     * gastos por ruta son las dos mitades de `expenses`, y los permisos se
+     * mantienen en la pantalla de roles.
+     *
+     * Va aquí y no en `AuditPresenter` porque **es una decisión de permisos**, y
+     * de paso el presentador saca de aquí la etiqueta del módulo en vez de tener
+     * su propia lista: la que tenía se había quedado sin gastos ni permisos, y
+     * esas entradas salían con el nombre de la clase.
+     *
+     * @return array<class-string, string> clase del modelo => clave del módulo
+     */
+    public static function auditables(): array
+    {
+        return [
+            PickupRoute::class => 'pickup-routes',
+            Courier::class => 'couriers',
+            Merchant::class => 'merchants',
+            Expense::class => 'expenses',
+            RouteExpense::class => 'expenses',
+            Setting::class => 'settings',
+            Role::class => 'roles',
+            Permission::class => 'roles',
+            User::class => 'users',
+        ];
+    }
+
+    /**
+     * Los modelos auditables cuyo módulo puede ver esta cuenta.
+     *
+     * Sin cuenta —o sin ninguno— devuelve una lista vacía, y entonces el listado
+     * no enseña nada: cerrado por defecto, como el token del bot.
+     *
+     * @return array<class-string, string> clase del modelo => clave del módulo
+     */
+    public static function visibleAuditables(?Authorizable $user): array
+    {
+        return array_filter(
+            self::auditables(),
+            fn (string $module) => (bool) $user?->can(self::name($module, self::VIEW)),
+        );
     }
 
     /**
