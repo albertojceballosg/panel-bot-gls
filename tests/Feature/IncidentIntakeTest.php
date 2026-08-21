@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\Api\IncidentIntakeController;
 use App\Models\Courier;
 use App\Models\RunPackage;
 use App\Models\IncidentRun;
@@ -399,5 +400,68 @@ class IncidentIntakeTest extends TestCase
 
         $this->assertDatabaseCount('incident_runs', 1);
         $this->assertDatabaseCount('run_packages', 0);
+    }
+
+    // --- Topes de tamaño ------------------------------------------------------
+    //
+    // No son reglas de negocio: acotan el trabajo, porque cada fila es un `updateOrCreate`.
+    // **El tope se ajusta a la jornada y no al revés** (regla 3 de CLAUDE.md): si un día real
+    // no cupiera, el que está mal puesto es el tope.
+
+    /** Una jornada de verdad —de las grandes— entra sin rozar el tope. */
+    public function test_a_real_sized_day_goes_through(): void
+    {
+        $incidencias = collect(range(1, 1000))
+            ->map(fn (int $i) => $this->incident(['expedicion' => (string) $i]))
+            ->all();
+
+        $this->send($this->payload($incidencias))->assertOk();
+
+        $this->assertDatabaseCount('run_packages', 1000);
+    }
+
+    public function test_a_day_over_the_cap_is_refused_whole(): void
+    {
+        // Filas mínimas y no incidencias enteras: lo que se prueba es el recuento, y montar
+        // 5.001 completas se come la memoria del propio test.
+        $incidencias = collect(range(1, IncidentIntakeController::MAX_FILAS + 1))
+            ->map(fn (int $i) => ['expedicion' => (string) $i])
+            ->all();
+
+        $this->send($this->payload($incidencias))
+            ->assertStatus(422)
+            ->assertJsonPath('detalle.incidencias', IncidentIntakeController::MAX_FILAS + 1);
+
+        // Ni media jornada: el rechazo es anterior a la transacción.
+        $this->assertDatabaseCount('incident_runs', 0);
+        $this->assertDatabaseCount('run_packages', 0);
+    }
+
+    public function test_the_alerts_are_capped_too(): void
+    {
+        $payload = $this->payload();
+        $payload['alertas'][0]['texto'] = str_repeat('x', 5001);
+
+        $this->send($payload)->assertStatus(422);
+    }
+
+    // --- Límite de peticiones -------------------------------------------------
+
+    /**
+     * Va **antes** del token: si fuera después, probar tokens contra el maestro completo del
+     * cliente saldría gratis (§10). Con 30 por minuto el bot no lo roza —dos peticiones al
+     * día, y las pendientes de su reenviador—, así que lo que se fija aquí es que exista.
+     */
+    public function test_it_rate_limits_before_checking_the_token(): void
+    {
+        for ($i = 0; $i < 30; $i++) {
+            $this->send($this->payload(), 'un-token-que-no-es')->assertUnauthorized();
+        }
+
+        $this->send($this->payload(), 'un-token-que-no-es')->assertStatus(429);
+
+        // Y el bueno también se queda fuera mientras dure el minuto: el contador es de la
+        // dirección, no de la credencial, que es lo que lo hace útil contra quien prueba.
+        $this->send($this->payload())->assertStatus(429);
     }
 }

@@ -401,6 +401,31 @@ envíos del día y no se puede leer como si fuera completa.
    así que el log dice a qué endpoint iba. Del token sigue sin escribirse nada, ni un prefijo
    (§10).
 
+### Los límites de la API (21/08/2026)
+
+Los dos endpoints van detrás de **`throttle:30,1`, y el límite se aplica antes del token**: si
+fuera después, probar tokens a ritmo de máquina contra el maestro completo del cliente saldría
+gratis (§10). Treinta por minuto es holgado a sabiendas —el bot hace dos peticiones al día, más
+las jornadas que suelte su reenviador de una vez— y hay un motivo para no apretar: **un `429` es
+un 4xx y el bot no reintenta los 4xx**, así que pasarse de estrictos no protege de nada y puede
+costar una jornada. Está anotado en §8 para avisar al otro repo.
+
+`POST /api/incidencias` acepta como mucho **2.000 filas por lista** y 500 alertas. El tope
+**se ajusta a la jornada y no al revés** (regla 3 de `CLAUDE.md`): son cuatro veces la jornada
+más grande medida —493 filas con ruta el 03/08/2026— y el doble de los envíos que tuvo ese día
+entero. Si un día real no cupiera, el que está mal puesto es el tope.
+
+**El recuento va antes del validador y no como una regla `max:`**, que es donde tocaría. El
+validador de Laravel despliega los `incidencias.*.campo` sobre todos los elementos *antes* de
+evaluar ninguna regla, así que con una lista larga el proceso se queda sin memoria dentro de
+`ValidationData` y muere **antes de llegar a su propio tope**: comprobado con 5.001 filas y
+`memory_limit=128M`. Un `count()` sobre el array crudo no cuesta nada y corta antes de tocar la
+base. Alguien va a querer moverlo al sitio obvio; está escrito ahí por qué no.
+
+Y el tope no es 5.000 aunque el payload quepa —3,6 MB ya decodificado— porque lo caro es
+**guardarlo**, que es un `updateOrCreate` por fila. Un tope que no se pueda procesar de verdad
+no es un tope, es un cartel.
+
 ### Lo que faltaba en este repo — ✅ nada, desde el 13/08/2026
 
 Aquí había tres puntos y los tres están hechos:
@@ -744,6 +769,12 @@ contenedor queda como root.
 
 Comandos del día a día:
 
+> **`phpunit.xml` sube el `memory_limit` a 512M.** La suite corre entera en un solo proceso de
+> PHP reteniendo el estado de cada test, y su pico rozaba los 130 MB contra el 128M por defecto:
+> el test que moría no era el que gastaba la memoria —reventaba uno cualquiera del final—, así
+> que el rato perdido buscándolo lo pagaba quien no lo había roto. No es un límite de la
+> aplicación: una jornada de 5.000 filas ocupa 3,6 MB ya decodificada.
+
 ```bash
 docker compose exec app php artisan <lo que sea>
 docker compose exec app composer <lo que sea>
@@ -780,7 +811,7 @@ docker compose logs -f vite
 > Lo único que queda abierto de la 6 a la 11 es **6.D**, el backfill del `codigo`, que es mejora
 > y no requisito (§8).
 
-**La suite son 626 tests** (1.794 aserciones) el 21/08/2026, sobre Postgres. Es la cifra
+**La suite son 632 tests** (1.840 aserciones) el 21/08/2026, sobre Postgres. Es la cifra
 que hay que ver pasar antes de dar cualquier cosa por terminada, no la inspección del código.
 
 **El orden importa.** La fase 2 va antes que cualquier pantalla: es el producto real, y en
@@ -2758,14 +2789,19 @@ permisos— y `ExpensesCrudTest`, 33 más para el catálogo.
         el aviso «sólo un Administrador puede…» en vez de un 403. La acción se negaba igual,
         pero la respuesta era la equivocada y le contaba a un extraño cómo tendría que hacerlo.
         Primero si puedes, después si debes.
-      - **La API no tiene *throttle* ni tope de tamaño de payload.** `POST /api/incidencias`
-        acepta `paquetes` sin límite y hace un `updateOrCreate` por fila. Ojo al ponerlo: el
-        contrato manda la jornada entera (§3.1) y **el tope se ajusta a la jornada, no al
-        revés**. Va con la fase 5, que es donde el bot alcanza al panel por red.
-      - **`SESSION_SECURE_COOKIE`, `SESSION_ENCRYPT` y `APP_DEBUG=false`** no están en
-        `.env.example`: sobre HTTP la cookie de sesión viaja sin `secure`. También fase 5.
-      - **Cambiar la contraseña no cierra las demás sesiones** (`Auth::logoutOtherDevices`),
-        que contradice un poco el motivo por el que se pide la contraseña actual.
+      - ✅ **La API tiene ya *throttle* y topes**, hechos el 21/08/2026. Ver «Los límites de
+        la API» al final de §3.1. **Queda avisar al repo del bot** de que el `429` conviene
+        reintentarlo: su §11.5 reintenta 5xx y timeout y descarta los 4xx, así que hoy una
+        jornada rechazada por ritmo esperaría al `--reenviar` del día siguiente. Se recupera
+        sola, pero tarde.
+      - ✅ **El bloque de despliegue en `.env.example`**, hecho el 21/08/2026:
+        `APP_DEBUG=false`, `SESSION_SECURE_COOKIE`, `SESSION_ENCRYPT` y `LOG_LEVEL`, cada uno
+        con su porqué y sin valores, que son de la fase 5.
+      - ✅ **Cambiar la contraseña cierra las demás sesiones**, hecho el 21/08/2026. A mano
+        —borrando las filas de `sessions`, que es donde viven (§6)— y no con
+        `Auth::logoutOtherDevices()`, que sólo surte efecto con el *middleware*
+        `AuthenticateSession` puesto en todo el panel y echaría gente por otros motivos. El
+        aviso lo dice, porque es una consecuencia que hay que contar.
       - Y la repetición que el repaso midió, que no es deuda grave pero está contada: 20 copias
         de los tres iconos SVG, seis `save()` casi calcados, diez cabeceras de tabla idénticas
         y un `euros()` en tres sitios.

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
@@ -130,7 +131,9 @@ class ProfileTest extends TestCase
             ->set('password_confirmation', 'la-nueva-larga')
             ->call('savePassword')
             ->assertHasNoErrors()
-            ->assertDispatched('toast', message: 'Contraseña cambiada.')
+            // Dice también que echó a las demás sesiones: es una consecuencia que hay que
+            // contar, no un efecto secundario que descubra el otro navegador.
+            ->assertDispatched('toast', message: 'Contraseña cambiada. Se han cerrado las demás sesiones de tu cuenta.')
             // No se queda escrita en el formulario después de guardar.
             ->assertSet('current_password', '')
             ->assertSet('password', '');
@@ -227,5 +230,55 @@ class ProfileTest extends TestCase
         Livewire::test('profile')->set('name', 'Alberto José')->call('saveProfile');
 
         $this->assertSame('Otra persona', $otro->refresh()->name);
+    }
+
+    // --- Cambiar la contraseña echa a los demás -------------------------------
+
+    /** Una sesión abierta de esa cuenta en otro sitio. Las sesiones viven en la base (§6). */
+    private function otraSesion(User $usuario, string $id): void
+    {
+        DB::table('sessions')->insert([
+            'id' => $id,
+            'user_id' => $usuario->getKey(),
+            'ip_address' => '10.0.0.9',
+            'user_agent' => 'otro navegador',
+            'payload' => '',
+            'last_activity' => now()->timestamp,
+        ]);
+    }
+
+    /**
+     * La contraseña actual se pide contra el portátil desatendido; si además no echa a quien
+     * ya está dentro, cambiarla no sirve para lo que se cambia.
+     */
+    public function test_changing_the_password_closes_the_other_sessions(): void
+    {
+        $this->otraSesion($this->yo, 'la-de-otro-navegador');
+        $ajena = User::factory()->create();
+        $this->otraSesion($ajena, 'la-de-otra-cuenta');
+
+        Livewire::test('profile')
+            ->set('current_password', 'la-de-siempre')
+            ->set('password', 'la-nueva-larga')
+            ->set('password_confirmation', 'la-nueva-larga')
+            ->call('savePassword')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseMissing('sessions', ['id' => 'la-de-otro-navegador']);
+
+        // La de otra cuenta no se toca, y la propia tampoco: quien cambia su contraseña no
+        // se echa a sí mismo a la calle.
+        $this->assertDatabaseHas('sessions', ['id' => 'la-de-otra-cuenta']);
+        $this->assertAuthenticatedAs($this->yo->fresh());
+    }
+
+    /** Y editar el nombre no cierra nada: sólo el cambio de contraseña echa a nadie. */
+    public function test_saving_the_profile_leaves_the_sessions_alone(): void
+    {
+        $this->otraSesion($this->yo, 'la-de-otro-navegador');
+
+        Livewire::test('profile')->set('name', 'Alberto José')->call('saveProfile');
+
+        $this->assertDatabaseHas('sessions', ['id' => 'la-de-otro-navegador']);
     }
 }

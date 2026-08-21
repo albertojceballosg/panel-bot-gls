@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use App\Support\SendsToasts;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
 use Livewire\Attributes\Layout;
@@ -91,9 +92,33 @@ new #[Layout('components.layouts.app')] class extends Component
         // hashearía dos veces.
         $this->user()->forceFill(['password' => $this->password])->save();
 
+        $this->closeOtherSessions();
+
         $this->reset('current_password', 'password', 'password_confirmation');
 
-        $this->toast('Contraseña cambiada.');
+        $this->toast('Contraseña cambiada. Se han cerrado las demás sesiones de tu cuenta.');
+    }
+
+    /**
+     * Cierra las sesiones abiertas de esta cuenta que no sean ésta.
+     *
+     * Sin esto, cambiar la contraseña no echaba a nadie: quien ya estuviera dentro seguía
+     * dentro, que contradice el motivo por el que se pide la contraseña actual —el portátil
+     * desatendido, arriba—. Cambiarla es justo lo que se hace cuando se sospecha que otro
+     * entró, y hasta ahora no servía para echarlo.
+     *
+     * A mano y no con `Auth::logoutOtherDevices()`: ése re-*hashea* la contraseña y sólo surte
+     * efecto con el *middleware* `AuthenticateSession` puesto en todo el panel, que echaría
+     * gente por motivos que no son éste. Aquí las sesiones viven en la base
+     * (`SESSION_DRIVER=database`, §6), así que se borran las filas y ya está: es lo mismo que
+     * hace la restauración de una copia, que se lleva la tabla entera por delante.
+     */
+    private function closeOtherSessions(): void
+    {
+        DB::table('sessions')
+            ->where('user_id', $this->user()->getKey())
+            ->where('id', '!=', session()->getId())
+            ->delete();
     }
 
     /** @return array<string, mixed> */

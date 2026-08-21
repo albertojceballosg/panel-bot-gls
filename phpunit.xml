@@ -18,6 +18,14 @@
         </include>
     </source>
     <php>
+        <!--
+            La suite corre entera en un solo proceso de PHP y su pico va por los 130 MB con
+            632 tests, contra el `memory_limit=128M` por defecto: el test 633 moría por
+            memoria, y el que moría no era el que la gastaba. No es un límite de la
+            aplicación —una jornada de 5.000 filas ocupa 3,6 MB ya decodificada—, es lo que
+            acumula PHPUnit reteniendo el estado de cada test.
+        -->
+        <ini name="memory_limit" value="512M"/>
         <env name="APP_ENV" value="testing"/>
         <!-- El `generado` del contrato es ISO-8601 con zona Europe/Madrid (§3).
              Sin esto los tests corren en UTC y no comprueban lo que se despliega. -->

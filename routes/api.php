@@ -16,7 +16,17 @@ use Illuminate\Support\Facades\Route;
 | Las URL se quedan en castellano: son parte del contrato, y cambiarlas
 | obligaría a tocar el .env del bot.
 */
-Route::middleware(VerifyBotToken::class)->group(function () {
+/*
+| El límite de peticiones va **antes** del token a propósito: si fuera después, probar tokens
+| a ritmo de máquina contra el maestro completo del cliente saldría gratis (§10).
+|
+| 30 por minuto es holgado a sabiendas. El bot hace dos peticiones al día —el maestro al
+| arrancar la corrida y las incidencias al terminarla—, pero su reenviador puede soltar
+| seguidas todas las jornadas que se quedaran pendientes mientras el panel estuvo caído
+| (`--reenviar`, CONTEXT.md del bot §11.5), y **un 429 es un 4xx, así que el bot no lo
+| reintenta**: pasarse de estrictos aquí no protege de nada y sí puede costar una jornada.
+*/
+Route::middleware(['throttle:30,1', VerifyBotToken::class])->group(function () {
     Route::get('/rutas', RouteMasterController::class)->name('api.route-master');
 
     // Valida y guarda la jornada entera: `incident_runs` + `run_packages`, con

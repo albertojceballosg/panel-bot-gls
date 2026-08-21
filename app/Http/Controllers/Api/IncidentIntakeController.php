@@ -44,9 +44,31 @@ use Illuminate\Support\Facades\Validator;
  */
 class IncidentIntakeController
 {
+    /**
+     * Cuántas filas admite como mucho una jornada, por lista.
+     *
+     * No es un límite de negocio sino un tope de trabajo: cada fila es un `updateOrCreate`.
+     * Diez veces la jornada más grande medida, para que **la que mande el bot quepa siempre**.
+     */
+    public const MAX_FILAS = 2000;
+
+    /** Y cuántas alertas de jornada, que son otra cosa: van a un `jsonb` de la corrida. */
+    public const MAX_ALERTAS = 500;
+
     public function __invoke(Request $request): JsonResponse
     {
         $payload = $request->json()->all();
+
+        // Los topes, **antes de validar**. Ver `demasiadasFilas()`: el `max:` de las reglas
+        // no llega a dispararse.
+        if ($excedida = $this->demasiadasFilas($payload)) {
+            Log::warning('POST /api/incidencias rechazado por tamaño.', $excedida);
+
+            return response()->json([
+                'error' => 'El payload trae más filas de las que admite una jornada',
+                'detalle' => $excedida,
+            ], 422);
+        }
 
         $validator = Validator::make($payload, [
             'version' => ['required', 'integer'],
@@ -63,6 +85,7 @@ class IncidentIntakeController
             'corrida.sin_hora_cinta' => ['required', 'integer', 'min:0'],
             'corrida.sin_ruta' => ['required', 'integer', 'min:0'],
 
+            // El tope de esta lista **no va aquí**: ver `demasiadasFilas()`.
             'incidencias' => ['present', 'array'],
             'incidencias.*.expedicion' => ['required', 'string', 'max:255'],
             'incidencias.*.comercio.nombre' => ['required', 'string', 'max:255'],
@@ -97,9 +120,12 @@ class IncidentIntakeController
             'paquetes.*.costes_reales' => ['nullable', 'numeric', 'min:0'],
             'incidencias.*.costes_reales' => ['nullable', 'numeric', 'min:0'],
 
+            // Las alertas son texto ya redactado y van a un `jsonb` (§3.1): ocho el 03/08.
+            // El tope del texto es generoso —una alerta enumera rutas— pero existe: sin él,
+            // una cadena de megas entra entera en la fila de la corrida.
             'alertas' => ['present', 'array'],
-            'alertas.*.tipo' => ['required', 'string'],
-            'alertas.*.texto' => ['required', 'string'],
+            'alertas.*.tipo' => ['required', 'string', 'max:255'],
+            'alertas.*.texto' => ['required', 'string', 'max:5000'],
         ]);
 
         if ($validator->fails()) {
@@ -139,6 +165,49 @@ class IncidentIntakeController
         ]);
 
         return response()->json($result);
+    }
+
+    /**
+     * Qué lista viene pasada de tamaño, si alguna.
+     *
+     * **Va antes del validador y no como una regla `max:`**, que es donde tocaría. El
+     * validador de Laravel despliega los `incidencias.*.campo` sobre todos los elementos
+     * *antes* de evaluar ninguna regla, así que con una lista lo bastante larga el proceso se
+     * queda sin memoria dentro de `ValidationData` y muere antes de llegar a su propio tope:
+     * comprobado con 5.001 filas y `memory_limit=128M`. Un `count()` sobre el array crudo no
+     * cuesta nada y corta antes de tocar la base.
+     *
+     * Los topes **se ajustan a la jornada, no al revés** (regla 3 de `CLAUDE.md`): el contrato
+     * manda el día completo (§3.1), así que un día real que no quepa es un tope mal puesto y
+     * no un payload mal formado. Las jornadas van por ~500 filas —983 envíos el 03/08/2026, de
+     * los que 493 traían ruta—, así que 2.000 es cuatro veces la más grande vista y el doble
+     * de los envíos que tuvo ese día **entero**, con y sin ruta.
+     *
+     * Y no más, aunque el payload de 5.000 filas ocupe sólo 3,6 MB ya decodificado: lo que
+     * cuesta es guardarlo, que es un `updateOrCreate` por fila. Un tope que no se pueda
+     * procesar de verdad no es un tope, es un cartel.
+     *
+     * @return array<string, int> Lista => cuántas traía. Vacío si todo cabe.
+     */
+    private function demasiadasFilas(array $payload): array
+    {
+        $topes = [
+            'incidencias' => self::MAX_FILAS,
+            'paquetes' => self::MAX_FILAS,
+
+            // Las alertas son de la jornada y no del paquete: ocho el 03/08/2026.
+            'alertas' => self::MAX_ALERTAS,
+        ];
+
+        $excedidas = [];
+
+        foreach ($topes as $lista => $tope) {
+            if (is_array($payload[$lista] ?? null) && count($payload[$lista]) > $tope) {
+                $excedidas[$lista] = count($payload[$lista]);
+            }
+        }
+
+        return $excedidas;
     }
 
     /**
